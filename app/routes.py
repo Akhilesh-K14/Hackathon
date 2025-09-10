@@ -1,7 +1,7 @@
 
 
 
-from flask import jsonify
+from flask import jsonify, send_file
 import smtplib
 import json
 from email.mime.text import MIMEText
@@ -14,14 +14,21 @@ import numpy as np
 import pickle
 import openai
 import google.generativeai as genai
+import hashlib
+import secrets
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from io import BytesIO
 import json
 
 from app import app
 from app.models import User, Task, Inventory, Expense, Journal
-# API route to add or update inventory for the logged-in user
 
 from flask import render_template, request, redirect, url_for, flash, session
-from flask import render_template
 
 # Email configuration
 SMTP_SERVER = "smtp.gmail.com"
@@ -31,14 +38,14 @@ SENDER_PASSWORD = "fwwnckpgduuknunh"
 RECEIVER_EMAIL = "akhilesh112606@gmail.com"
 
 # OpenAI configuration
-OPENAI_API_KEY = "AIzaSyDehPaFlj8P5t8IUOB748dJXlTCHUtQqnU"
+OPENAI_API_KEY = "AIzaSyDDwBz6W4X5ZN-DovooMfVRJTsMFOy0c3A"
 
 # Initialize OpenAI client
 from openai import OpenAI
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Google Gemini AI configuration
-GEMINI_API_KEY = "AIzaSyDehPaFlj8P5t8IUOB748dJXlTCHUtQqnU"
+GEMINI_API_KEY = "AIzaSyDDwBz6W4X5ZN-DovooMfVRJTsMFOy0c3A"
 genai.configure(api_key=GEMINI_API_KEY)
 
 # Initialize Gemini model
@@ -48,6 +55,346 @@ print(f"🤖 AI INTEGRATIONS INITIALIZED:")
 print(f"OpenAI Client: ✅ Configured")
 print(f"Google Gemini: ✅ Configured (gemini-1.5-flash)")
 print(f"========================================\n")
+
+# Simple Password Security Functions
+def hash_password(password):
+    """Hash a password with a random salt using SHA-256"""
+    # Generate a random salt
+    salt = secrets.token_hex(16)
+    # Create hash with salt
+    password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+    # Return salt and hash combined
+    return f"{salt}${password_hash}"
+
+def verify_password(password, stored_hash):
+    """Verify a password against a stored hash"""
+    try:
+        # Handle different formats for backward compatibility
+        if '$' in stored_hash:
+            # Standard format: salt$hash
+            salt, password_hash = stored_hash.split('$')
+            new_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+            return new_hash == password_hash
+        else:
+            # Plain text password (very old format - for backward compatibility only)
+            print(f"⚠️ WARNING: Plain text password detected! User should update password.")
+            return password == stored_hash
+    except ValueError:
+        # If split fails, it might be plain text
+        print(f"⚠️ WARNING: Plain text password detected! User should update password.")
+        return password == stored_hash
+    except Exception as e:
+        print(f"⚠️ Password verification error: {e}")
+        return False
+
+print(f"🔐 PASSWORD SECURITY INITIALIZED")
+print(f"Hashing Algorithm: SHA-256 with random salt")
+print(f"========================================\n")
+
+# Additional Security Functions
+def is_strong_password(password):
+    """Check if password meets strength requirements"""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    
+    has_upper = any(c.isupper() for c in password)
+    has_lower = any(c.islower() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    has_special = any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password)
+    
+    if not has_upper:
+        return False, "Password must contain at least one uppercase letter"
+    if not has_lower:
+        return False, "Password must contain at least one lowercase letter"
+    if not has_digit:
+        return False, "Password must contain at least one number"
+    if not has_special:
+        return False, "Password must contain at least one special character"
+    
+    return True, "Password is strong"
+
+def generate_seasonal_report_pdf(report_data):
+    """Generate a PDF report from seasonal report data"""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=20,
+        spaceAfter=30,
+        alignment=TA_CENTER,
+        textColor=colors.darkgreen
+    )
+    
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        spaceAfter=12,
+        textColor=colors.darkblue
+    )
+    
+    # Title
+    story.append(Paragraph("🌾 Farm Management System - Seasonal Report", title_style))
+    story.append(Spacer(1, 20))
+    
+    # User Information
+    user_info = report_data['user_info']
+    story.append(Paragraph("👤 Farmer Information", heading_style))
+    story.append(Paragraph(f"<b>Farmer Name:</b> {user_info['username']}", styles['Normal']))
+    story.append(Paragraph(f"<b>Report Generated:</b> {report_data['generated_at']}", styles['Normal']))
+    story.append(Spacer(1, 15))
+    
+    # Summary Section
+    summary = report_data['summary']
+    story.append(Paragraph("📊 Farm Summary", heading_style))
+    
+    summary_data = [
+        ['Metric', 'Count'],
+        ['Total Tasks', str(summary['total_tasks'])],
+        ['Pending Tasks', str(summary['pending_tasks'])],
+        ['Completed Tasks', str(summary['completed_tasks'])],
+        ['Inventory Items', str(summary['total_inventory_items'])],
+        ['Total Inventory Quantity', str(summary['total_inventory_quantity'])],
+        ['Total Expenses', f"₹{summary['total_expenses']:.2f}"],
+        ['Journal Entries', str(summary['total_journal_entries'])]
+    ]
+    
+    summary_table = Table(summary_data, colWidths=[3*inch, 2*inch])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    
+    story.append(summary_table)
+    story.append(Spacer(1, 20))
+    
+    # Seasonal Expenses
+    story.append(Paragraph("💰 Seasonal Expenses Breakdown", heading_style))
+    expenses_by_season = summary['expenses_by_season']
+    
+    expense_data = [
+        ['Season', 'Amount (₹)'],
+        ['Kharif', f"₹{expenses_by_season['kharif']:.2f}"],
+        ['Rabi', f"₹{expenses_by_season['rabi']:.2f}"],
+        ['Zaid', f"₹{expenses_by_season['zaid']:.2f}"]
+    ]
+    
+    expense_table = Table(expense_data, colWidths=[2.5*inch, 2.5*inch])
+    expense_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    
+    story.append(expense_table)
+    story.append(Spacer(1, 20))
+    
+    # Activities Summary
+    if summary['activities_count']:
+        story.append(Paragraph("🚜 Farming Activities Summary", heading_style))
+        activities_data = [['Activity', 'Count']]
+        for activity, count in summary['activities_count'].items():
+            activities_data.append([activity.title(), str(count)])
+        
+        activities_table = Table(activities_data, colWidths=[3*inch, 2*inch])
+        activities_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        story.append(activities_table)
+        story.append(PageBreak())
+    
+    # Detailed Tasks
+    if report_data['tasks']:
+        story.append(Paragraph("📋 Task Details", heading_style))
+        tasks_data = [['Task Title', 'Date', 'Notes']]
+        for task in report_data['tasks'][:10]:  # Limit to first 10 tasks
+            notes = task['notes'][:50] + "..." if len(task['notes']) > 50 else task['notes']
+            tasks_data.append([task['title'], task['date'], notes])
+        
+        tasks_table = Table(tasks_data, colWidths=[2*inch, 1.5*inch, 2.5*inch])
+        tasks_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkred),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.mistyrose),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP')
+        ]))
+        
+        story.append(tasks_table)
+        story.append(Spacer(1, 20))
+    
+    # Inventory Details
+    if report_data['inventory']:
+        story.append(Paragraph("📦 Current Inventory", heading_style))
+        inventory_data = [['Item', 'Quantity']]
+        for item in report_data['inventory'][:15]:  # Limit to first 15 items
+            inventory_data.append([item['item'], str(item['quantity'])])
+        
+        inventory_table = Table(inventory_data, colWidths=[3*inch, 2*inch])
+        inventory_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkorange),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.papayawhip),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        story.append(inventory_table)
+        story.append(Spacer(1, 20))
+    
+    # Footer
+    story.append(Spacer(1, 30))
+    story.append(Paragraph("Generated by Farm Management System", 
+                          ParagraphStyle('Footer', parent=styles['Normal'], 
+                                       alignment=TA_CENTER, fontSize=10, 
+                                       textColor=colors.grey)))
+    story.append(Paragraph(f"Report Date: {report_data['generated_on']}", 
+                          ParagraphStyle('Footer', parent=styles['Normal'], 
+                                       alignment=TA_CENTER, fontSize=10, 
+                                       textColor=colors.grey)))
+    
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+def generate_crop_recommendations_pdf(recommendations_data, market_data=None):
+    """Generate a PDF report for crop recommendations and market insights"""
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        spaceAfter=20,
+        alignment=TA_CENTER,
+        textColor=colors.darkgreen
+    )
+    
+    story.append(Paragraph("🌱 Smart Crop Recommendations Report", title_style))
+    story.append(Spacer(1, 20))
+    
+    # Weather Data
+    if recommendations_data.get('weather_data'):
+        weather = recommendations_data['weather_data']
+        story.append(Paragraph("🌤️ Weather Analysis", styles['Heading2']))
+        story.append(Paragraph(f"<b>Location:</b> {weather.get('location', 'Unknown')}", styles['Normal']))
+        story.append(Paragraph(f"<b>Temperature:</b> {weather['temperature']}°C", styles['Normal']))
+        story.append(Paragraph(f"<b>Humidity:</b> {weather['humidity']}%", styles['Normal']))
+        story.append(Paragraph(f"<b>Rainfall:</b> {weather['rainfall']}mm", styles['Normal']))
+        story.append(Spacer(1, 15))
+    
+    # Crop Recommendations
+    if recommendations_data.get('recommendations'):
+        story.append(Paragraph("🌾 AI-Powered Crop Recommendations", styles['Heading2']))
+        
+        crops_data = [['Rank', 'Crop', 'Suitability Score', 'Recommendation']]
+        for i, (crop, confidence) in enumerate(recommendations_data['recommendations'], 1):
+            confidence_pct = f"{confidence*100:.1f}%"
+            recommendation = "Highly Recommended" if confidence > 0.85 else "Recommended" if confidence > 0.75 else "Consider"
+            crops_data.append([str(i), crop, confidence_pct, recommendation])
+        
+        crops_table = Table(crops_data, colWidths=[0.8*inch, 2*inch, 1.5*inch, 2*inch])
+        crops_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkgreen),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 11),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.lightgreen),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        
+        story.append(crops_table)
+        story.append(Spacer(1, 20))
+    
+    # Market Insights
+    if market_data and market_data.get('crops'):
+        story.append(Paragraph("💰 Market Insights", styles['Heading2']))
+        
+        market_table_data = [['Crop', 'Price/Quintal', 'Trend', 'Demand', 'Market Tip']]
+        for crop in market_data['crops']:
+            tip = crop['market_tip'][:40] + "..." if len(crop['market_tip']) > 40 else crop['market_tip']
+            market_table_data.append([
+                crop['name'],
+                crop['price'],
+                crop['trend_percentage'],
+                crop['demand'],
+                tip
+            ])
+        
+        market_table = Table(market_table_data, colWidths=[1.2*inch, 1.2*inch, 1*inch, 1*inch, 2*inch])
+        market_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.darkblue),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.lightblue),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP')
+        ]))
+        
+        story.append(market_table)
+        story.append(Spacer(1, 15))
+        
+        if market_data.get('general_tip'):
+            story.append(Paragraph("💡 General Market Advice", styles['Heading3']))
+            story.append(Paragraph(market_data['general_tip'], styles['Normal']))
+    
+    # Footer
+    story.append(Spacer(1, 30))
+    story.append(Paragraph("Generated by Farm Management System - AI-Powered Recommendations", 
+                          ParagraphStyle('Footer', parent=styles['Normal'], 
+                                       alignment=TA_CENTER, fontSize=10, 
+                                       textColor=colors.grey)))
+    story.append(Paragraph(f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 
+                          ParagraphStyle('Footer', parent=styles['Normal'], 
+                                       alignment=TA_CENTER, fontSize=10, 
+                                       textColor=colors.grey)))
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
 
 # Mock ML model data (replace with actual trained model loading)
 # For demonstration, we'll use a simple rule-based system
@@ -806,14 +1153,61 @@ def login():
     if request.method == "POST":
         username = request.form.get("loginName")
         password = request.form.get("loginMeta")
+        
+        print(f"\n🔐 LOGIN ATTEMPT DEBUG:")
+        print(f"   Username received: '{username}'")
+        print(f"   Password received: '{password}'")
+        print(f"   Form data: {dict(request.form)}")
+        
+        # Find user by username
         user = User.query.filter_by(username=username).first()
-        if user and user.password == password:
-            session["user_id"] = user.id
-            flash("Login successful!", "success")
-            return redirect(url_for("dashboard"))
-        else:
+        
+        if not user:
+            print(f"❌ User '{username}' not found in database")
             flash("Invalid username or password", "danger")
             return render_template("login.html")
+        
+        print(f"✅ User found: {user.username}")
+        print(f"   Stored password hash: {user.password}")
+        
+        # Verify password
+        try:
+            password_valid = verify_password(password, user.password)
+            print(f"   Password verification result: {password_valid}")
+            
+            if password_valid:
+                # Check if user needs password migration to new secure format
+                needs_migration = False
+                if ':' not in user.password or user.password.count(':') < 2:
+                    # User has old format password, migrate to new secure format
+                    needs_migration = True
+                    print(f"🔄 Migrating password for user '{username}' to advanced security")
+                    
+                    # Hash password with new advanced method
+                    new_hash = hash_password(password)
+                    user.password = new_hash
+                    
+                    # Save to database
+                    from app import db
+                    db.session.commit()
+                    print(f"✅ Password migration completed for user '{username}'")
+                
+                session["user_id"] = user.id
+                flash("Login successful!", "success")
+                print(f"✅ User '{username}' logged in successfully{' (password migrated)' if needs_migration else ''}")
+                return redirect(url_for("dashboard"))
+            else:
+                flash("Invalid username or password", "danger")
+                print(f"❌ Failed login attempt for username: '{username}' - Invalid password")
+                return render_template("login.html")
+                
+        except Exception as e:
+            print(f"❌ Exception during password verification: {e}")
+            import traceback
+            traceback.print_exc()
+            flash("Login error occurred", "danger")
+            return render_template("login.html")
+            
     return render_template("login.html")
 
 # Route to get all tasks for the logged-in user (GET request, returns JSON)
@@ -838,21 +1232,91 @@ def register():
     username = request.form.get("signupName")
     password = request.form.get("signupPassword")
     confirm = request.form.get("signupConfirm")
+    
+    # Validation checks
     if not username or not password or not confirm:
         flash("Please fill all fields", "danger")
         return render_template("login.html")
+    
     if password != confirm:
         flash("Passwords do not match", "danger")
         return render_template("login.html")
+    
+    # Password strength validation
+    if len(password) < 6:
+        flash("Password must be at least 6 characters long", "danger")
+        return render_template("login.html")
+    
+    # Check if username already exists
     existing = User.query.filter_by(username=username).first()
     if existing:
         flash("Username already exists", "danger")
         return render_template("login.html")
-    user = User(username=username, password=password)
+    
+    # Hash the password before storing
+    hashed_password = hash_password(password)
+    
+    # Create new user with hashed password
+    user = User(username=username, password=hashed_password)
     from app import db
     db.session.add(user)
     db.session.commit()
+    
+    print(f"✅ New user '{username}' registered with hashed password")
     flash("Registration successful! Please log in.", "success")
+    return redirect(url_for("login"))
+
+# API route to change password for logged-in user
+@app.route("/api/change_password", methods=["POST"])
+def api_change_password():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    data = request.get_json()
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    confirm_password = data.get("confirm_password")
+    
+    if not current_password or not new_password or not confirm_password:
+        return jsonify({"success": False, "error": "All password fields are required"}), 400
+    
+    # Verify current password
+    if not verify_password(current_password, user.password):
+        return jsonify({"success": False, "error": "Current password is incorrect"}), 400
+    
+    # Check if new passwords match
+    if new_password != confirm_password:
+        return jsonify({"success": False, "error": "New passwords do not match"}), 400
+    
+    # Validate new password strength (optional - you can enable this for stronger security)
+    # is_valid, message = is_strong_password(new_password)
+    # if not is_valid:
+    #     return jsonify({"success": False, "error": message}), 400
+    
+    # Basic validation
+    if len(new_password) < 6:
+        return jsonify({"success": False, "error": "New password must be at least 6 characters long"}), 400
+    
+    # Hash and update password
+    from app import db
+    user.password = hash_password(new_password)
+    db.session.commit()
+    
+    print(f"✅ Password changed successfully for user '{user.username}'")
+    return jsonify({"success": True, "message": "Password changed successfully"})
+
+# Logout route
+@app.route("/logout")
+def logout():
+    if "user_id" in session:
+        user_id = session["user_id"]
+        session.clear()
+        print(f"✅ User (ID: {user_id}) logged out successfully")
+        flash("You have been logged out successfully.", "info")
     return redirect(url_for("login"))
 
 # API route to manually send task reminders
@@ -986,6 +1450,202 @@ def api_seasonal_report():
     }
     
     return jsonify({"success": True, "data": report_data})
+
+# API route to download seasonal report as PDF
+@app.route("/api/seasonal_report_pdf", methods=["GET"])
+def api_seasonal_report_pdf():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    try:
+        # Get all user data (same as seasonal_report)
+        tasks = Task.query.filter_by(user_id=user.id).all()
+        inventory = Inventory.query.filter_by(user_id=user.id).all()
+        expenses = Expense.query.filter_by(user_id=user.id).all()
+        journal_entries = Journal.query.filter_by(user_id=user.id).order_by(Journal.date.desc()).all()
+        
+        # Process data (same logic as seasonal_report)
+        tasks_data = []
+        tasks_by_status = {"pending": 0, "completed": 0}
+        for task in tasks:
+            task_data = {
+                "id": task.id,
+                "title": task.title,
+                "date": task.date,
+                "notes": task.notes or ""
+            }
+            tasks_data.append(task_data)
+            
+            task_date = datetime.strptime(task.date, '%Y-%m-%d').date()
+            if task_date <= date.today():
+                tasks_by_status["completed"] += 1
+            else:
+                tasks_by_status["pending"] += 1
+        
+        inventory_data = []
+        total_inventory_items = 0
+        for inv in inventory:
+            inventory_data.append({
+                "id": inv.id,
+                "item": inv.item,
+                "quantity": inv.quantity
+            })
+            total_inventory_items += inv.quantity
+        
+        expenses_data = []
+        expenses_by_season = {"kharif": 0, "rabi": 0, "zaid": 0}
+        total_expenses = 0
+        for expense in expenses:
+            expense_data = {
+                "id": expense.id,
+                "item": expense.item,
+                "amount": expense.amount,
+                "season": expense.season
+            }
+            expenses_data.append(expense_data)
+            expenses_by_season[expense.season] += expense.amount
+            total_expenses += expense.amount
+        
+        journal_data = []
+        activities_count = {}
+        for entry in journal_entries:
+            journal_entry = {
+                "id": entry.id,
+                "activity": entry.activity,
+                "activity_details": entry.activity_details,
+                "date": entry.date
+            }
+            journal_data.append(journal_entry)
+            
+            if entry.activity in activities_count:
+                activities_count[entry.activity] += 1
+            else:
+                activities_count[entry.activity] = 1
+        
+        # Create report data
+        report_data = {
+            "user_info": {
+                "username": user.username,
+                "user_id": user.id
+            },
+            "summary": {
+                "total_tasks": len(tasks_data),
+                "pending_tasks": tasks_by_status["pending"],
+                "completed_tasks": tasks_by_status["completed"],
+                "total_inventory_items": len(inventory_data),
+                "total_inventory_quantity": total_inventory_items,
+                "total_expenses": total_expenses,
+                "expenses_by_season": expenses_by_season,
+                "total_journal_entries": len(journal_data),
+                "activities_count": activities_count
+            },
+            "tasks": tasks_data,
+            "inventory": inventory_data,
+            "expenses": expenses_data,
+            "journal": journal_data,
+            "generated_on": date.today().strftime('%Y-%m-%d'),
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Generate PDF
+        pdf_buffer = generate_seasonal_report_pdf(report_data)
+        
+        # Create filename with current date
+        filename = f"farm_report_{user.username}_{date.today().strftime('%Y-%m-%d')}.pdf"
+        
+        print(f"✅ PDF report generated successfully for user '{user.username}'")
+        
+        # Return PDF as download
+        from flask import send_file
+        return send_file(
+            pdf_buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/pdf'
+        )
+        
+    except Exception as e:
+        print(f"❌ Error generating PDF report: {str(e)}")
+        return jsonify({"success": False, "error": f"Failed to generate PDF: {str(e)}"}), 500
+
+# API route to download crop recommendations as PDF
+@app.route("/api/crop_recommendations_pdf", methods=["GET"])
+def api_crop_recommendations_pdf():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    try:
+        # Get location parameters
+        lat = request.args.get('lat', '16.5449')
+        lon = request.args.get('lon', '81.5212')
+        location_name = request.args.get('location', 'India')
+        
+        # Get weather data and crop recommendations (same logic as crop_recommendations)
+        API_KEY = "a1b2394289828346d954d42d376a1033"
+        url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {"lat": lat, "lon": lon, "appid": API_KEY, "units": "metric"}
+        
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            weather_data = r.json()
+            temperature = weather_data['main']['temp']
+            humidity = weather_data['main']['humidity']
+            rainfall = weather_data.get('rain', {}).get('1h', 0) * 24 * 30
+            
+            if rainfall == 0:
+                current_month = datetime.now().month
+                seasonal_rainfall = {9: 150, 10: 50, 11: 30, 12: 20, 1: 25, 2: 30}
+                rainfall = seasonal_rainfall.get(current_month, 100)
+            
+            predictions = predict_crops_mock(temperature, humidity, rainfall)
+            
+            recommendations_data = {
+                "recommendations": predictions,
+                "weather_data": {
+                    "temperature": temperature,
+                    "humidity": humidity,
+                    "rainfall": rainfall,
+                    "location": weather_data.get('name', location_name)
+                }
+            }
+            
+            # Try to get market insights
+            market_data = None
+            try:
+                market_result = generate_market_insights(predictions, location_name)
+                if market_result["success"]:
+                    market_data = market_result["data"]
+                else:
+                    market_data = get_fallback_market_data(predictions)["data"]
+            except:
+                market_data = get_fallback_market_data(predictions)["data"]
+            
+            # Generate PDF
+            pdf_buffer = generate_crop_recommendations_pdf(recommendations_data, market_data)
+            
+            # Create filename
+            filename = f"crop_recommendations_{location_name}_{date.today().strftime('%Y-%m-%d')}.pdf"
+            
+            print(f"✅ Crop recommendations PDF generated successfully for location: {location_name}")
+            
+            # Return PDF as download
+            from flask import send_file
+            return send_file(
+                pdf_buffer,
+                as_attachment=True,
+                download_name=filename,
+                mimetype='application/pdf'
+            )
+        else:
+            return jsonify({"success": False, "error": "Weather data unavailable"}), 500
+            
+    except Exception as e:
+        print(f"❌ Error generating crop recommendations PDF: {str(e)}")
+        return jsonify({"success": False, "error": f"Failed to generate PDF: {str(e)}"}), 500
 
 # Route to display seasonal report page
 @app.route("/seasonal_report")

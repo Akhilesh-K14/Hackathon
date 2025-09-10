@@ -169,6 +169,13 @@
           <div id="weatherInfo" style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.2); border-radius: 5px; font-size: 13px;">
             <strong>Weather Data:</strong> <span id="weatherDetails">Loading...</span>
           </div>
+          
+          <!-- PDF Download Button -->
+          <div style="margin-top: 15px; text-align: center;">
+            <button id="downloadCropRecommendationsPdf" class="btn" style="background: rgba(255,255,255,0.9); color: #6c5ce7; border: 2px solid rgba(255,255,255,0.3);">
+              📄 Download Recommendations PDF
+            </button>
+          </div>
         </div>
         
         <div style="margin-top:20px">
@@ -1468,6 +1475,38 @@
           alertsInfoText.textContent = "Alert system temporarily unavailable. Showing basic alerts. Add more journal entries for better smart recommendations when service resumes.";
         }
       }
+
+      // PDF Download functionality for crop recommendations
+      document.getElementById('downloadCropRecommendationsPdf').addEventListener('click', function() {
+        const button = this;
+        const originalText = button.textContent;
+        
+        // Show loading state
+        button.textContent = 'Generating PDF...';
+        button.disabled = true;
+        
+        // Create download URL with current location parameters
+        const lat = currentLocation.lat || '16.5449';
+        const lon = currentLocation.lon || '81.5212';
+        const location = currentLocation.name || 'Unknown';
+        
+        const url = `/api/crop_recommendations_pdf?lat=${lat}&lon=${lon}&location=${encodeURIComponent(location)}`;
+        
+        // Create download link
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `crop_recommendations_${location}_${new Date().toISOString().split('T')[0]}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Reset button after a short delay
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.disabled = false;
+          alert('Crop recommendations PDF download started! Check your downloads folder.');
+        }, 1500);
+      });
     });
   </script>
 </body>
