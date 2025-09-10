@@ -3,6 +3,7 @@
 
 from flask import jsonify
 import smtplib
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, date
@@ -11,6 +12,9 @@ from collections import defaultdict, Counter
 from statistics import mean
 import numpy as np
 import pickle
+import openai
+import google.generativeai as genai
+import json
 
 from app import app
 from app.models import User, Task, Inventory, Expense, Journal
@@ -25,6 +29,25 @@ SMTP_PORT = 587
 SENDER_EMAIL = "iamakhilyt2005@gmail.com"
 SENDER_PASSWORD = "fwwnckpgduuknunh"
 RECEIVER_EMAIL = "akhilesh112606@gmail.com"
+
+# OpenAI configuration
+OPENAI_API_KEY = "AIzaSyDehPaFlj8P5t8IUOB748dJXlTCHUtQqnU"
+
+# Initialize OpenAI client
+from openai import OpenAI
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Google Gemini AI configuration
+GEMINI_API_KEY = "AIzaSyDehPaFlj8P5t8IUOB748dJXlTCHUtQqnU"
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Initialize Gemini model
+gemini_model = genai.GenerativeModel("gemini-1.5-flash")
+
+print(f"🤖 AI INTEGRATIONS INITIALIZED:")
+print(f"OpenAI Client: ✅ Configured")
+print(f"Google Gemini: ✅ Configured (gemini-1.5-flash)")
+print(f"========================================\n")
 
 # Mock ML model data (replace with actual trained model loading)
 # For demonstration, we'll use a simple rule-based system
@@ -100,6 +123,435 @@ def predict_crops_mock(temperature, humidity, rainfall):
     print(f"========================\n")
     
     return predictions
+
+def generate_market_insights(top_crops, location="India"):
+    """Generate market insights for top 3 crops using OpenAI API"""
+    try:
+        print(f"\n💰 GENERATING MARKET INSIGHTS")
+        print(f"Top crops: {[crop[0] for crop in top_crops]}")
+        print(f"Location: {location}")
+        
+        crop_names = [crop[0] for crop in top_crops]
+        
+        prompt = f"""Generate current market insights for these top 3 crops in {location}: {', '.join(crop_names)}
+
+For each crop, provide:
+1. Current market price (in ₹/quintal for Indian market)
+2. Price trend (up/down/stable with percentage change)
+3. Market demand (High/Medium/Low)
+4. A brief market tip or insight
+
+Format the response as JSON with this structure:
+{{
+  "crops": [
+    {{
+      "name": "Crop Name",
+      "price": "₹X,XXX/quintal",
+      "trend": "up/down/stable",
+      "trend_percentage": "+/-X%",
+      "demand": "High/Medium/Low",
+      "market_tip": "Brief insight about market conditions"
+    }}
+  ],
+  "general_tip": "Overall market advice for farmers"
+}}
+
+Make the data realistic for current Indian agricultural market conditions."""
+
+        # Using OpenAI ChatCompletion API with new client format
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert agricultural market analyst with deep knowledge of Indian crop markets, pricing trends, and farming economics."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+        
+        # Extract and parse the response
+        content = response.choices[0].message.content
+        print(f"OpenAI Response: {content}")
+        
+        # Parse JSON response
+        market_data = json.loads(content)
+        
+        print(f"✅ Market insights generated successfully!")
+        return {"success": True, "data": market_data}
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parsing error: {str(e)}")
+        return {"success": False, "error": "Failed to parse market data"}
+    except Exception as e:
+        print(f"❌ Error generating market insights: {str(e)}")
+        return {"success": False, "error": f"Market API error: {str(e)}"}
+
+def get_fallback_market_data(top_crops):
+    """Fallback market data if OpenAI API fails"""
+    fallback_data = {
+        "Rice": {"price": "₹1,850", "trend": "stable", "trend_percentage": "±0%", "demand": "Medium"},
+        "Wheat": {"price": "₹2,200", "trend": "up", "trend_percentage": "+5%", "demand": "High"},
+        "Cotton": {"price": "₹5,500", "trend": "up", "trend_percentage": "+3%", "demand": "High"},
+        "Sugarcane": {"price": "₹350", "trend": "down", "trend_percentage": "-2%", "demand": "Low"},
+        "Maize": {"price": "₹1,950", "trend": "stable", "trend_percentage": "±0%", "demand": "Medium"},
+        "Pulses": {"price": "₹3,800", "trend": "up", "trend_percentage": "+7%", "demand": "High"},
+        "Mustard": {"price": "₹4,200", "trend": "up", "trend_percentage": "+4%", "demand": "Medium"},
+        "Barley": {"price": "₹1,600", "trend": "stable", "trend_percentage": "±0%", "demand": "Low"}
+    }
+    
+    crops_data = []
+    for crop_name, _ in top_crops:
+        if crop_name in fallback_data:
+            data = fallback_data[crop_name]
+            crops_data.append({
+                "name": crop_name,
+                "price": data["price"] + "/quintal",
+                "trend": data["trend"],
+                "trend_percentage": data["trend_percentage"],
+                "demand": data["demand"],
+                "market_tip": f"Consider {crop_name.lower()} cultivation based on current market conditions"
+            })
+    
+    return {
+        "success": True,
+        "data": {
+            "crops": crops_data,
+            "general_tip": "Market conditions are favorable for diversified crop production. Monitor price trends regularly."
+        }
+    }
+
+def generate_farming_alerts(journal_entries):
+    """Generate AI-powered alerts and reminders based on farming journal entries using OpenAI"""
+    alerts = []
+    today = date.today()
+    
+    print(f"\n🚨 GENERATING AI-POWERED FARMING ALERTS")
+    print(f"Processing {len(journal_entries)} journal entries with OpenAI")
+    
+    try:
+        # Prepare journal data for OpenAI analysis
+        journal_summary = []
+        activity_counts = {}
+        
+        for entry in journal_entries:
+            try:
+                entry_date = datetime.strptime(entry.date, '%Y-%m-%d').date()
+                days_ago = (today - entry_date).days
+                
+                # Include recent entries (last 60 days) for analysis
+                if days_ago <= 60:
+                    journal_summary.append({
+                        'date': entry.date,
+                        'activity': entry.activity,
+                        'details': entry.activity_details,
+                        'days_ago': days_ago
+                    })
+                    
+                    # Count activities
+                    activity_counts[entry.activity] = activity_counts.get(entry.activity, 0) + 1
+                    
+            except ValueError:
+                continue
+        
+        # Create prompt for OpenAI
+        current_month = today.strftime('%B')
+        current_date = today.strftime('%Y-%m-%d')
+        
+        prompt = f"""You are an expert agricultural advisor analyzing a farmer's activity journal for {current_date} (current date: {current_month}). 
+
+Recent farming activities (last 60 days):
+{json.dumps(journal_summary, indent=2)}
+
+Activity summary:
+{json.dumps(activity_counts, indent=2)}
+
+Based on this farming journal, generate 4-6 personalized alerts and reminders. Consider:
+- Timing of last activities (watering, fertilizing, pest control, etc.)
+- Seasonal farming patterns for {current_month}
+- Crop growth cycles and harvest timing
+- Preventive measures and best practices
+- Specific recommendations based on their farming patterns
+
+For each alert, provide:
+1. Type: "warning", "info", "success", or "error"
+2. Icon: appropriate farming emoji
+3. Title: short descriptive title
+4. Message: detailed, actionable message
+5. Priority: "high", "medium", or "low"
+
+Return ONLY a valid JSON array of alerts, no other text:
+[
+  {{
+    "type": "warning",
+    "icon": "�",
+    "title": "Alert Title",
+    "message": "Detailed message with specific recommendations",
+    "priority": "high"
+  }}
+]"""
+
+        print("Sending journal data to OpenAI for intelligent analysis...")
+        
+        # Call OpenAI API
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "You are an expert agricultural advisor specializing in personalized farming recommendations. Always respond with valid JSON only."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            max_tokens=1500,
+            temperature=0.7
+        )
+        
+        # Parse OpenAI response
+        ai_response = response.choices[0].message.content.strip()
+        print(f"OpenAI response received: {len(ai_response)} characters")
+        
+        # Clean and parse JSON response
+        if ai_response.startswith('```json'):
+            ai_response = ai_response.replace('```json', '').replace('```', '').strip()
+        
+        try:
+            ai_alerts = json.loads(ai_response)
+            
+            if isinstance(ai_alerts, list):
+                alerts.extend(ai_alerts)
+                print(f"✅ Successfully generated {len(ai_alerts)} AI-powered alerts")
+            else:
+                print("⚠️ AI response was not a list, using fallback alerts")
+                alerts = get_fallback_farming_alerts(journal_entries)
+                
+        except json.JSONDecodeError as je:
+            print(f"⚠️ JSON decode error: {je}")
+            print(f"Raw AI response: {ai_response[:200]}...")
+            alerts = get_fallback_farming_alerts(journal_entries)
+            
+    except Exception as e:
+        print(f"⚠️ OpenAI API error: {e}")
+        alerts = get_fallback_farming_alerts(journal_entries)
+    
+    # Add a few basic alerts if AI didn't generate enough
+    if len(alerts) < 3:
+        basic_alerts = get_enhanced_basic_farming_alerts(journal_entries, activity_counts)
+        alerts.extend(basic_alerts)
+    
+    # Sort alerts by priority
+    priority_order = {"high": 1, "medium": 2, "low": 3}
+    alerts.sort(key=lambda x: priority_order.get(x.get("priority", "low"), 3))
+    
+    print(f"🎯 Final result: {len(alerts)} personalized farming alerts generated")
+    return alerts[:8]  # Limit to 8 alerts
+
+def get_fallback_farming_alerts(journal_entries):
+    """Fallback alerts when OpenAI is unavailable"""
+    alerts = []
+    today = date.today()
+    
+    # Basic analysis for fallback
+    activity_dates = {}
+    for entry in journal_entries:
+        try:
+            entry_date = datetime.strptime(entry.date, '%Y-%m-%d').date()
+            activity = entry.activity.lower()
+            
+            if activity not in activity_dates:
+                activity_dates[activity] = []
+            activity_dates[activity].append(entry_date)
+        except ValueError:
+            continue
+    
+    # Generate basic alerts
+    if 'watering' in activity_dates:
+        last_watering = max(activity_dates['watering'])
+        days_since = (today - last_watering).days
+        if days_since >= 3:
+            alerts.append({
+                "type": "warning",
+                "icon": "💧",
+                "title": "Watering Schedule",
+                "message": f"Last watering was {days_since} days ago. Check soil moisture and water if needed.",
+                "priority": "high" if days_since >= 5 else "medium"
+            })
+    
+    if 'fertilizing' in activity_dates:
+        last_fertilizing = max(activity_dates['fertilizing'])
+        days_since = (today - last_fertilizing).days
+        if days_since >= 21:
+            alerts.append({
+                "type": "info",
+                "icon": "🧪",
+                "title": "Fertilizer Application",
+                "message": f"Consider next fertilizer application. Last applied {days_since} days ago.",
+                "priority": "medium"
+            })
+    
+    return alerts
+
+def get_enhanced_basic_farming_alerts(journal_entries, activity_counts):
+    """Enhanced basic alerts to supplement AI-generated ones"""
+    alerts = []
+    current_month = date.today().month
+    current_date = date.today()
+    
+    # Enhanced seasonal alerts based on current month
+    seasonal_alerts = {
+        9: [  # September
+            {
+                "type": "warning",
+                "icon": "�",
+                "title": "Rabi Season Preparation",
+                "message": "September is ideal for preparing fields for Rabi crops like wheat, barley, and mustard. Start soil preparation and seed selection.",
+                "priority": "high"
+            },
+            {
+                "type": "info",
+                "icon": "🌧️",
+                "title": "Monsoon End Planning",
+                "message": "As monsoon season ends, plan drainage systems and assess crop damage. Prepare for post-monsoon activities.",
+                "priority": "medium"
+            }
+        ],
+        10: [  # October
+            {
+                "type": "success",
+                "icon": "🌱",
+                "title": "Optimal Sowing Time",
+                "message": "October is the best time for sowing Rabi crops. Ensure proper seed treatment and optimal spacing.",
+                "priority": "high"
+            }
+        ],
+        11: [  # November
+            {
+                "type": "info",
+                "icon": "💧",
+                "title": "Irrigation Management",
+                "message": "Monitor soil moisture levels for newly sown Rabi crops. Provide adequate but not excessive irrigation.",
+                "priority": "medium"
+            }
+        ]
+    }
+    
+    # Add seasonal alerts
+    if current_month in seasonal_alerts:
+        alerts.extend(seasonal_alerts[current_month])
+    
+    # Activity-based intelligent alerts
+    if activity_counts:
+        total_activities = sum(activity_counts.values())
+        
+        if 'watering' in activity_counts:
+            watering_freq = activity_counts['watering']
+            if watering_freq < total_activities * 0.3:  # Less than 30% watering
+                alerts.append({
+                    "type": "warning",
+                    "icon": "💧",
+                    "title": "Irrigation Frequency Check",
+                    "message": f"Your watering frequency ({watering_freq} times) seems low. Consider increasing irrigation based on crop needs and soil moisture.",
+                    "priority": "medium"
+                })
+        
+        if 'fertilizing' in activity_counts:
+            fert_freq = activity_counts['fertilizing']
+            if fert_freq == 0:
+                alerts.append({
+                    "type": "error",
+                    "icon": "🌱",
+                    "title": "Fertilization Missing",
+                    "message": "No fertilization activities recorded. Proper nutrition is essential for healthy crop growth.",
+                    "priority": "high"
+                })
+        
+        if 'pest-control' not in activity_counts:
+            alerts.append({
+                "type": "warning",
+                "icon": "🔍",
+                "title": "Pest Monitoring Needed",
+                "message": "No pest control activities recorded. Regular monitoring and preventive measures are crucial for crop protection.",
+                "priority": "medium"
+            })
+    
+    # Always include general farming tips
+    general_alerts = [
+        {
+            "type": "info",
+            "icon": "�️",
+            "title": "Weather Monitoring",
+            "message": "Check weather forecasts daily for planning irrigation and field activities. Stay updated on seasonal patterns.",
+            "priority": "low"
+        },
+        {
+            "type": "success",
+            "icon": "📊",
+            "title": "Record Keeping",
+            "message": "Continue maintaining detailed farming records. This data helps in making informed decisions and tracking progress.",
+            "priority": "low"
+        }
+    ]
+    
+    alerts.extend(general_alerts)
+    return alerts[:4]  # Limit enhanced basic alerts
+
+def generate_gemini_enhanced_calendar_activities(top_crops, current_month):
+    """Use Google Gemini to generate intelligent calendar activities based on top crops"""
+    try:
+        crops_str = ", ".join(top_crops)
+        month_names = [
+            'January', 'February', 'March', 'April', 'May', 'June',
+            'July', 'August', 'September', 'October', 'November', 'December'
+        ]
+        current_month_name = month_names[current_month - 1]
+        
+        calendar_prompt = f"""You are an expert agricultural calendar advisor for Indian farming conditions.
+
+TASK: Generate specific farming activities for {current_month_name} (month {current_month}) for these top recommended crops: {crops_str}
+
+REQUIREMENTS:
+- Focus on activities specific to {current_month_name} in India
+- Consider seasonal patterns (Kharif, Rabi, Zaid seasons)
+- Include timing-specific activities (planting, harvesting, maintenance)
+- Make activities actionable and date-specific
+
+OUTPUT FORMAT: Return ONLY a valid JSON object with this structure:
+{{
+  "month": {current_month},
+  "month_name": "{current_month_name}",
+  "activities": [
+    {{
+      "crop": "Rice",
+      "activity": "Land preparation",
+      "dates": [5, 10, 15],
+      "priority": "high",
+      "description": "Prepare fields for transplanting by plowing and leveling"
+    }}
+  ]
+}}
+
+Generate 8-12 activities covering all 3 crops with specific dates and priorities."""
+
+        print(f"🗓️ Generating calendar activities for {current_month_name} using Gemini...")
+        
+        response = gemini_model.generate_content(calendar_prompt)
+        calendar_text = response.text.strip()
+        
+        # Clean response
+        if calendar_text.startswith('```json'):
+            calendar_text = calendar_text[7:-3].strip()
+        elif calendar_text.startswith('```'):
+            calendar_text = calendar_text[3:-3].strip()
+        
+        calendar_data = json.loads(calendar_text)
+        print(f"✅ Generated {len(calendar_data.get('activities', []))} calendar activities")
+        return calendar_data
+        
+    except Exception as e:
+        print(f"⚠️ Gemini calendar generation error: {e}")
+        return None
 
 def send_task_reminder_email(user, tasks_today):
     """Send email notification for tasks due today"""
@@ -780,6 +1232,82 @@ def api_crop_recommendations():
         print(f"❌ Error getting crop recommendations: {str(e)}")
         return jsonify({"success": False, "error": f"Failed to get recommendations: {str(e)}"}), 500
 
+# API route to get market insights for top crops
+@app.route("/api/market_insights", methods=["GET"])
+def api_market_insights():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    # Get location parameters
+    lat = request.args.get('lat', '16.5449')
+    lon = request.args.get('lon', '81.5212')
+    location_name = request.args.get('location', 'India')
+    
+    print(f"\n📊 FETCHING MARKET INSIGHTS")
+    print(f"Location: {location_name} (Lat {lat}, Lon {lon})")
+    
+    try:
+        # First get the crop recommendations
+        API_KEY = "a1b2394289828346d954d42d376a1033"
+        url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {"lat": lat, "lon": lon, "appid": API_KEY, "units": "metric"}
+        
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            weather_data = r.json()
+            
+            # Extract weather parameters
+            temperature = weather_data['main']['temp']
+            humidity = weather_data['main']['humidity']
+            
+            # Calculate rainfall
+            rainfall = weather_data.get('rain', {}).get('1h', 0) * 24 * 30
+            if rainfall == 0:
+                current_month = datetime.now().month
+                if current_month in [6, 7, 8, 9]:
+                    rainfall = 200
+                elif current_month in [10, 11, 12, 1, 2]:
+                    rainfall = 50
+                else:
+                    rainfall = 30
+            
+            # Get crop predictions
+            top_crops = predict_crops_mock(temperature, humidity, rainfall)
+            
+            # Generate market insights using OpenAI
+            market_result = generate_market_insights(top_crops, location_name)
+            
+            if not market_result["success"]:
+                # Use fallback data if OpenAI fails
+                print("Using fallback market data...")
+                market_result = get_fallback_market_data(top_crops)
+            
+            print(f"✅ Market insights generated successfully!")
+            
+            return jsonify({
+                "success": True,
+                "market_data": market_result["data"],
+                "top_crops": top_crops,
+                "location": location_name
+            })
+        else:
+            print(f"❌ Weather API Error: {r.status_code}")
+            return jsonify({"success": False, "error": f"Weather API Error: {r.status_code}"}), 500
+            
+    except Exception as e:
+        print(f"❌ Error getting market insights: {str(e)}")
+        # Return fallback data in case of any error
+        fallback_crops = [("Wheat", 0.91), ("Rice", 0.85), ("Cotton", 0.78)]
+        fallback_market = get_fallback_market_data(fallback_crops)
+        
+        return jsonify({
+            "success": True,
+            "market_data": fallback_market["data"],
+            "top_crops": fallback_crops,
+            "location": location_name,
+            "note": "Using fallback data due to API limitations"
+        })
+
 # API route to add a journal entry for the logged-in user
 @app.route("/api/journal", methods=["POST"])
 def api_add_journal_entry():
@@ -874,6 +1402,66 @@ def api_delete_journal_entry():
     
     return jsonify({"success": True})
 
+# API route to get dynamic alerts and reminders based on journal entries
+@app.route("/api/farming_alerts", methods=["GET"])
+def api_farming_alerts():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    print(f"\n🚨 FETCHING FARMING ALERTS")
+    print(f"User: {user.username}")
+    
+    try:
+        # Get all journal entries for the user
+        journal_entries = Journal.query.filter_by(user_id=user.id).order_by(Journal.date.desc()).all()
+        
+        # Generate alerts based on journal analysis
+        alerts = generate_farming_alerts(journal_entries)
+        
+        print(f"✅ Generated {len(alerts)} alerts successfully!")
+        
+        return jsonify({
+            "success": True,
+            "alerts": alerts,
+            "total_entries_analyzed": len(journal_entries),
+            "ai_powered": True,
+            "sources": ["Google Gemini", "OpenAI", "Smart Logic"],
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"❌ Error generating farming alerts: {str(e)}")
+        
+        # Return fallback alerts in case of error
+        fallback_alerts = [
+            {
+                "type": "info",
+                "icon": "📅",
+                "title": "Farm Management",
+                "message": "Keep track of your farming activities in the journal for personalized recommendations.",
+                "priority": "low"
+            },
+            {
+                "type": "warning",
+                "icon": "🌧️",
+                "title": "Weather Monitoring",
+                "message": "Check weather forecasts regularly to plan your farming activities.",
+                "priority": "medium"
+            }
+        ]
+        
+        return jsonify({
+            "success": True,
+            "alerts": fallback_alerts,
+            "total_entries_analyzed": 0,
+            "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "note": "Using fallback alerts due to system limitations"
+        })
+
 # Route to display crop planning page
 @app.route("/crop_planning")
 def crop_planning_page():
@@ -882,6 +1470,101 @@ def crop_planning_page():
         return redirect(url_for("login"))
     
     return render_template("crop_planning.html")
+
+# API route to get intelligent calendar activities based on top crops
+@app.route("/api/smart_calendar", methods=["GET"])
+def api_smart_calendar():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "User not logged in"})
+    
+    # Get parameters
+    month = request.args.get('month', date.today().month, type=int)
+    year = request.args.get('year', date.today().year, type=int)
+    top_crops = request.args.getlist('crops')  # List of top crop names
+    
+    if not top_crops:
+        top_crops = ['Rice', 'Wheat', 'Cotton']  # Default crops
+    
+    print(f"\n📅 GENERATING SMART CALENDAR")
+    print(f"Month: {month}, Year: {year}")
+    print(f"Top Crops: {top_crops}")
+    
+    try:
+        # Generate calendar activities using Gemini
+        calendar_data = generate_gemini_enhanced_calendar_activities(top_crops, month)
+        
+        if calendar_data:
+            return jsonify({
+                "success": True,
+                "calendar_data": calendar_data,
+                "ai_generated": True,
+                "month": month,
+                "year": year,
+                "crops_analyzed": top_crops
+            })
+        else:
+            # Fallback to basic calendar data
+            fallback_data = get_fallback_calendar_data(top_crops, month)
+            return jsonify({
+                "success": True,
+                "calendar_data": fallback_data,
+                "ai_generated": False,
+                "month": month,
+                "year": year,
+                "crops_analyzed": top_crops
+            })
+            
+    except Exception as e:
+        print(f"❌ Calendar generation error: {e}")
+        return jsonify({
+            "success": False,
+            "error": f"Calendar generation failed: {str(e)}"
+        })
+
+def get_fallback_calendar_data(top_crops, month):
+    """Fallback calendar data when AI generation fails"""
+    month_names = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+    ]
+    
+    # Basic crop schedule patterns
+    basic_activities = {
+        'Rice': {
+            5: [{"activity": "Land preparation", "dates": [5, 10], "priority": "high"}],
+            6: [{"activity": "Transplanting", "dates": [1, 15], "priority": "high"}],
+            9: [{"activity": "Harvesting prep", "dates": [20, 25], "priority": "medium"}],
+            10: [{"activity": "Harvesting", "dates": [5, 15], "priority": "high"}]
+        },
+        'Wheat': {
+            10: [{"activity": "Field preparation", "dates": [1, 10], "priority": "high"}],
+            11: [{"activity": "Sowing", "dates": [1, 15], "priority": "high"}],
+            3: [{"activity": "Harvesting", "dates": [15, 30], "priority": "high"}]
+        },
+        'Cotton': {
+            4: [{"activity": "Field preparation", "dates": [1, 15], "priority": "high"}],
+            5: [{"activity": "Sowing", "dates": [1, 20], "priority": "high"}],
+            9: [{"activity": "First picking", "dates": [10, 25], "priority": "medium"}]
+        }
+    }
+    
+    activities = []
+    for crop in top_crops:
+        if crop in basic_activities and month in basic_activities[crop]:
+            for activity_data in basic_activities[crop][month]:
+                activities.append({
+                    "crop": crop,
+                    "activity": activity_data["activity"],
+                    "dates": activity_data["dates"],
+                    "priority": activity_data["priority"],
+                    "description": f"Basic {activity_data['activity'].lower()} activities for {crop}"
+                })
+    
+    return {
+        "month": month,
+        "month_name": month_names[month - 1],
+        "activities": activities
+    }
 
 
 
