@@ -6,9 +6,14 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, date
+import requests
+from collections import defaultdict, Counter
+from statistics import mean
+import numpy as np
+import pickle
 
 from app import app
-from app.models import User, Task, Inventory, Expense
+from app.models import User, Task, Inventory, Expense, Journal
 # API route to add or update inventory for the logged-in user
 
 from flask import render_template, request, redirect, url_for, flash, session
@@ -20,6 +25,81 @@ SMTP_PORT = 587
 SENDER_EMAIL = "iamakhilyt2005@gmail.com"
 SENDER_PASSWORD = "fwwnckpgduuknunh"
 RECEIVER_EMAIL = "akhilesh112606@gmail.com"
+
+# Mock ML model data (replace with actual trained model loading)
+# For demonstration, we'll use a simple rule-based system
+def load_ml_model():
+    """Mock function to simulate loading ML model and scaler"""
+    # In a real implementation, you would load your trained model here:
+    # model = pickle.load(open('crop_model.pkl', 'rb'))
+    # scaler = pickle.load(open('scaler.pkl', 'rb'))
+    
+    # Mock targets (crop names)
+    targets = ['Rice', 'Wheat', 'Cotton', 'Sugarcane', 'Maize', 'Pulses', 'Mustard', 'Barley']
+    return None, None, targets
+
+# Load model (mock for now)
+model, scaler, targets = load_ml_model()
+
+# Debug print for model loading
+print(f"\n🚀 FARM MANAGEMENT SYSTEM - ML MODULE INITIALIZED")
+print(f"Model loaded: {'✅ Yes' if model is not None else '❌ No (using mock predictions)'}")
+print(f"Scaler loaded: {'✅ Yes' if scaler is not None else '❌ No (using mock predictions)'}")
+print(f"Available crop targets: {targets}")
+print(f"=================================================\n")
+
+def predict_crops_mock(temperature, humidity, rainfall):
+    """Mock ML prediction based on weather conditions"""
+    predictions = []
+    
+    # Debug print for input parameters
+    print(f"\n=== ML PREDICTION DEBUG ===")
+    print(f"Input Weather Data:")
+    print(f"  Temperature: {temperature}°C")
+    print(f"  Humidity: {humidity}%")
+    print(f"  Rainfall: {rainfall}mm")
+    
+    # Rule-based mock predictions based on weather conditions
+    if temperature > 30 and humidity > 70 and rainfall > 150:
+        # Hot, humid, high rainfall - good for rice
+        predictions = [
+            ("Rice", 0.92),
+            ("Sugarcane", 0.85),
+            ("Cotton", 0.78)
+        ]
+        print(f"Condition: Hot, humid, high rainfall")
+    elif temperature < 25 and rainfall < 100:
+        # Cool, low rainfall - good for wheat
+        predictions = [
+            ("Wheat", 0.91),
+            ("Barley", 0.83),
+            ("Mustard", 0.76)
+        ]
+        print(f"Condition: Cool, low rainfall")
+    elif temperature > 25 and humidity < 60:
+        # Moderate temp, low humidity
+        predictions = [
+            ("Cotton", 0.87),
+            ("Maize", 0.82),
+            ("Pulses", 0.74)
+        ]
+        print(f"Condition: Moderate temp, low humidity")
+    else:
+        # Default predictions
+        predictions = [
+            ("Maize", 0.85),
+            ("Pulses", 0.80),
+            ("Rice", 0.75)
+        ]
+        print(f"Condition: Default predictions")
+    
+    # Debug print for predictions
+    print(f"\nTop 3 Crop Predictions:")
+    for i, (crop, confidence) in enumerate(predictions, 1):
+        print(f"  {i}. {crop}: {confidence*100:.1f}% confidence")
+    print(f"========================\n")
+    
+    return predictions
 
 def send_task_reminder_email(user, tasks_today):
     """Send email notification for tasks due today"""
@@ -363,6 +443,7 @@ def api_seasonal_report():
     tasks = Task.query.filter_by(user_id=user.id).all()
     inventory = Inventory.query.filter_by(user_id=user.id).all()
     expenses = Expense.query.filter_by(user_id=user.id).all()
+    journal_entries = Journal.query.filter_by(user_id=user.id).order_by(Journal.date.desc()).all()
     
     # Process tasks data
     tasks_data = []
@@ -409,6 +490,24 @@ def api_seasonal_report():
         expenses_by_season[expense.season] += expense.amount
         total_expenses += expense.amount
     
+    # Process journal entries data
+    journal_data = []
+    activities_count = {}
+    for entry in journal_entries:
+        journal_entry = {
+            "id": entry.id,
+            "activity": entry.activity,
+            "activity_details": entry.activity_details,
+            "date": entry.date
+        }
+        journal_data.append(journal_entry)
+        
+        # Count activities
+        if entry.activity in activities_count:
+            activities_count[entry.activity] += 1
+        else:
+            activities_count[entry.activity] = 1
+    
     # Create comprehensive report
     report_data = {
         "user_info": {
@@ -422,11 +521,14 @@ def api_seasonal_report():
             "total_inventory_items": len(inventory_data),
             "total_inventory_quantity": total_inventory_items,
             "total_expenses": total_expenses,
-            "expenses_by_season": expenses_by_season
+            "expenses_by_season": expenses_by_season,
+            "total_journal_entries": len(journal_data),
+            "activities_count": activities_count
         },
         "tasks": tasks_data,
         "inventory": inventory_data,
         "expenses": expenses_data,
+        "journal": journal_data,
         "generated_on": date.today().strftime('%Y-%m-%d'),
         "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
@@ -441,6 +543,336 @@ def seasonal_report_page():
         return redirect(url_for("login"))
     
     return render_template("seasonal_report.html")
+
+# API route to get weather forecast data
+@app.route("/api/weather_forecast", methods=["GET"])
+def api_weather_forecast():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    # Get location parameters from request
+    lat = request.args.get('lat', '16.5449')  # Default to Bhimavaram
+    lon = request.args.get('lon', '81.5212')
+    location_name = request.args.get('location', 'Bhimavaram')
+    
+    API_KEY = "a1b2394289828346d954d42d376a1033"  # Your OpenWeatherMap API key
+    url = "https://api.openweathermap.org/data/2.5/forecast"
+    params = {"lat": lat, "lon": lon, "appid": API_KEY, "units": "metric"}
+    
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            # Group entries by date
+            days = defaultdict(list)
+            for entry in data["list"]:
+                date_str = entry["dt_txt"].split()[0]
+                days[date_str].append(entry)
+            
+            # Process next 4 days
+            forecast_data = []
+            for i, (date_str, entries) in enumerate(list(days.items())[:4], 1):
+                temps = [e["main"]["temp"] for e in entries]
+                avg_temp = round(mean(temps), 1)
+                
+                # Most common weather description
+                weather_descs = [e["weather"][0]["description"] for e in entries]
+                most_common_weather = Counter(weather_descs).most_common(1)[0][0]
+                
+                # Rain probability: use max pop (probability of precipitation) for the day
+                pops = [e.get("pop", 0) for e in entries]
+                rain_percent = round(max(pops) * 100) if pops else 0
+                
+                # Get weather icon
+                weather_icons = [e["weather"][0]["icon"] for e in entries]
+                most_common_icon = Counter(weather_icons).most_common(1)[0][0]
+                
+                # Format date for display
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                formatted_date = date_obj.strftime('%b %d')
+                day_name = date_obj.strftime('%A')
+                
+                forecast_data.append({
+                    "day": i,
+                    "date": formatted_date,
+                    "day_name": day_name,
+                    "avg_temp": avg_temp,
+                    "weather": most_common_weather.title(),
+                    "rain_percent": rain_percent,
+                    "icon": most_common_icon
+                })
+            
+            return jsonify({
+                "success": True, 
+                "forecast": forecast_data,
+                "location": location_name,
+                "coordinates": {"lat": float(lat), "lon": float(lon)}
+            })
+        else:
+            return jsonify({"success": False, "error": f"API Error: {r.status_code}"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Request failed: {str(e)}"}), 500
+
+# API route to get coordinates from city name
+@app.route("/api/geocode", methods=["GET"])
+def api_geocode():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    city_name = request.args.get('city')
+    if not city_name:
+        return jsonify({"success": False, "error": "City name required"}), 400
+    
+    API_KEY = "a1b2394289828346d954d42d376a1033"  # Your OpenWeatherMap API key
+    url = "https://api.openweathermap.org/geo/1.0/direct"
+    params = {"q": city_name, "limit": 1, "appid": API_KEY}
+    
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if data:
+                location = data[0]
+                return jsonify({
+                    "success": True,
+                    "location": {
+                        "name": location.get("name"),
+                        "state": location.get("state", ""),
+                        "country": location.get("country", ""),
+                        "lat": location.get("lat"),
+                        "lon": location.get("lon")
+                    }
+                })
+            else:
+                return jsonify({"success": False, "error": "Location not found"}), 404
+        else:
+            return jsonify({"success": False, "error": f"Geocoding API Error: {r.status_code}"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": f"Geocoding failed: {str(e)}"}), 500
+
+# ML Prediction route
+@app.route('/api/predict', methods=['POST'])
+def predict():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    # Get data from request
+    data = request.get_json()
+    
+    print(f"\n🤖 ML PREDICTION API CALLED")
+    print(f"Request data: {data}")
+    
+    # Validate required fields
+    if not data or 'temperature' not in data or 'humidity' not in data or 'rainfall' not in data:
+        print(f"❌ Missing required fields in request")
+        return jsonify({"success": False, "error": "Temperature, humidity, and rainfall required"}), 400
+    
+    try:
+        temperature = float(data['temperature'])
+        humidity = float(data['humidity'])
+        rainfall = float(data['rainfall'])
+        
+        print(f"Parsed input values:")
+        print(f"  Temperature: {temperature}")
+        print(f"  Humidity: {humidity}")
+        print(f"  Rainfall: {rainfall}")
+        
+        # For now, use mock prediction (replace with actual ML model)
+        if model is not None and scaler is not None:
+            # Real ML prediction code (when you have trained model)
+            print(f"Using trained ML model...")
+            input_data = np.array([[temperature, humidity, rainfall]])
+            input_scaled = scaler.transform(input_data)
+            probs = model.predict_proba(input_scaled)[0]
+            top3_idx = probs.argsort()[-3:][::-1]
+            top3_crops = [(targets[i], float(probs[i])) for i in top3_idx]
+        else:
+            # Mock prediction for demonstration
+            print(f"Using mock ML prediction (no trained model loaded)...")
+            top3_crops = predict_crops_mock(temperature, humidity, rainfall)
+        
+        print(f"✅ Prediction completed successfully!")
+        print(f"Returning top 3 crops: {top3_crops}")
+        
+        return jsonify({
+            "success": True,
+            "top3_crops": top3_crops,
+            "weather_data": {
+                "temperature": temperature,
+                "humidity": humidity,
+                "rainfall": rainfall
+            }
+        })
+        
+    except ValueError as e:
+        print(f"❌ ValueError: {str(e)}")
+        return jsonify({"success": False, "error": f"Invalid numeric values: {str(e)}"}), 400
+    except Exception as e:
+        print(f"❌ Exception: {str(e)}")
+        return jsonify({"success": False, "error": f"Prediction failed: {str(e)}"}), 500
+
+# API route to get ML predictions based on current weather
+@app.route("/api/crop_recommendations", methods=["GET"])
+def api_crop_recommendations():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    # Get location parameters
+    lat = request.args.get('lat', '16.5449')
+    lon = request.args.get('lon', '81.5212')
+    
+    print(f"\n🌍 FETCHING CROP RECOMMENDATIONS")
+    print(f"Location: Lat {lat}, Lon {lon}")
+    
+    API_KEY = "a1b2394289828346d954d42d376a1033"
+    url = "https://api.openweathermap.org/data/2.5/weather"
+    params = {"lat": lat, "lon": lon, "appid": API_KEY, "units": "metric"}
+    
+    try:
+        # Get current weather data
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            weather_data = r.json()
+            
+            # Extract weather parameters
+            temperature = weather_data['main']['temp']
+            humidity = weather_data['main']['humidity']
+            
+            # For rainfall, we'll use a default or recent rainfall data
+            # In a real app, you might want to get historical rainfall data
+            rainfall = weather_data.get('rain', {}).get('1h', 0) * 24 * 30  # Convert to monthly estimate
+            if rainfall == 0:
+                # Default rainfall based on season/location
+                current_month = datetime.now().month
+                if current_month in [6, 7, 8, 9]:  # Monsoon months
+                    rainfall = 200
+                elif current_month in [10, 11, 12, 1, 2]:  # Winter months
+                    rainfall = 50
+                else:  # Summer months
+                    rainfall = 30
+            
+            print(f"Weather API Response:")
+            print(f"  Location: {weather_data.get('name', 'Unknown')}")
+            print(f"  Temperature: {temperature}°C")
+            print(f"  Humidity: {humidity}%")
+            print(f"  Calculated Rainfall: {rainfall}mm (Season-based)")
+            
+            # Get ML predictions
+            predictions = predict_crops_mock(temperature, humidity, rainfall)
+            
+            print(f"✅ Crop recommendations generated successfully!")
+            
+            return jsonify({
+                "success": True,
+                "recommendations": predictions,
+                "weather_data": {
+                    "temperature": temperature,
+                    "humidity": humidity,
+                    "rainfall": rainfall,
+                    "location": weather_data.get('name', 'Unknown')
+                }
+            })
+        else:
+            print(f"❌ Weather API Error: {r.status_code}")
+            return jsonify({"success": False, "error": f"Weather API Error: {r.status_code}"}), 500
+            
+    except Exception as e:
+        print(f"❌ Error getting crop recommendations: {str(e)}")
+        return jsonify({"success": False, "error": f"Failed to get recommendations: {str(e)}"}), 500
+
+# API route to add a journal entry for the logged-in user
+@app.route("/api/journal", methods=["POST"])
+def api_add_journal_entry():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    data = request.get_json()
+    activity = data.get("activity") if data else None
+    activity_details = data.get("activity_details") if data else None
+    date = data.get("date") if data else None
+    
+    if not activity or not activity_details or not date:
+        return jsonify({"success": False, "error": "Activity, activity details, and date required"}), 400
+    
+    # Validate activity type
+    valid_activities = ["planting", "watering", "fertilizing", "pest-control", "harvesting", "soil-prep"]
+    if activity.lower() not in valid_activities:
+        return jsonify({"success": False, "error": "Invalid activity type"}), 400
+    
+    from app import db
+    new_entry = Journal(
+        activity=activity, 
+        activity_details=activity_details, 
+        date=date, 
+        user_id=user.id
+    )
+    db.session.add(new_entry)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True, 
+        "created": True, 
+        "id": new_entry.id, 
+        "activity": new_entry.activity, 
+        "activity_details": new_entry.activity_details,
+        "date": new_entry.date
+    })
+
+# API route to get all journal entries for the logged-in user
+@app.route("/api/journal", methods=["GET"])
+def api_get_journal_entries():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    # Get all journal entries for the user, ordered by date descending
+    entries = Journal.query.filter_by(user_id=user.id).order_by(Journal.date.desc()).all()
+    
+    entries_data = [
+        {
+            "id": entry.id,
+            "activity": entry.activity,
+            "activity_details": entry.activity_details,
+            "date": entry.date
+        }
+        for entry in entries
+    ]
+    
+    return jsonify({"success": True, "entries": entries_data})
+
+# API route to delete a journal entry for the logged-in user
+@app.route("/api/delete_journal", methods=["POST"])
+def api_delete_journal_entry():
+    if "user_id" not in session:
+        return jsonify({"success": False, "error": "Not logged in"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user:
+        return jsonify({"success": False, "error": "User not found"}), 404
+    
+    data = request.get_json()
+    entry_id = data.get("entry_id") if data else None
+    
+    if not entry_id:
+        return jsonify({"success": False, "error": "No journal entry specified"}), 400
+    
+    from app import db
+    entry = Journal.query.filter_by(id=entry_id, user_id=user.id).first()
+    
+    if not entry:
+        return jsonify({"success": False, "error": "Journal entry not found or not authorized"}), 404
+    
+    db.session.delete(entry)
+    db.session.commit()
+    
+    return jsonify({"success": True})
 
 # Route to display crop planning page
 @app.route("/crop_planning")
