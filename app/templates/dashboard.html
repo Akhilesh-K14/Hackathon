@@ -58,29 +58,35 @@
         <div class="muted" id="farmMeta">Set up your farm profile</div>
       </div>
 
-      <div style="margin-top:14px">
-        <label>Quick add task</label>
-        <input id="quickTaskTitle" placeholder="Task (e.g., Water wheat)" />
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <input id="quickTaskDate" type="date" />
-          <button id="addQuickTask" class="btn small">Add</button>
-        </div>
-      </div>
+
 
       <div style="margin-top:18px">
         <label>Inventory</label>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <input id="invName" placeholder="Item" />
-          <input id="invQty" placeholder="Qty" />
-          <button id="addInv" class="btn small">Add</button>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-direction:column;align-items:stretch">
+          <div style="display:flex;gap:8px;">
+            <input id="invName" placeholder="Item" />
+            <input id="invQty" placeholder="Qty" />
+          </div>
+          <button id="newAddInv" class="btn small" style="margin-top:6px;width:100%">Add</button>
         </div>
-        <div id="invList" style="margin-top:10px"></div>
+        <div id="invList" style="margin-top:10px">
+          {% if inventory and inventory|length > 0 %}
+            {% for inv in inventory %}
+              <div style="display:flex;justify-content:space-between;margin-top:6px;align-items:center" data-inv-id="{{ inv.id }}">
+                <div>{{ inv.item }} <span class="muted" style="font-size:12px">x{{ inv.quantity }}</span></div>
+                <button class="small delete-inv-btn" data-inv-id="{{ inv.id }}" style="background:#e74c3c;color:white;border:none;padding:2px 8px;border-radius:6px;cursor:pointer">🗑</button>
+              </div>
+            {% endfor %}
+          {% else %}
+            <div class="muted small">No inventory</div>
+          {% endif %}
+        </div>
       </div>
 
       <div style="margin-top:18px">
         <label>Balance / Seasonal report</label>
         <div id="reportArea" style="margin-top:8px"></div>
-        <button id="exportReport" class="small" style="margin-top:8px">Export JSON</button>
+        <button id="exportReport" class="small" style="margin-top:8px">View Report</button>
       </div>
 
       <div style="margin-top:18px">
@@ -231,6 +237,253 @@
           }, 500); // Wait for DOM update
         });
       }
+
+      // Add inventory button handler
+      var invBtn = document.getElementById('newAddInv');
+      if (invBtn) {
+        invBtn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          const name = document.getElementById('invName').value.trim();
+          const qty = parseInt(document.getElementById('invQty').value) || 1;
+          
+          if (!name) {
+            alert('Please enter an item name');
+            return;
+          }
+
+          try {
+            const response = await fetch('/api/inventory', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ item: name, quantity: qty })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+              // Clear the form
+              document.getElementById('invName').value = '';
+              document.getElementById('invQty').value = '';
+              // Show appropriate success message
+              if (data.updated) {
+                alert(`${data.item} quantity updated to ${data.quantity}!`);
+              } else {
+                alert('New inventory item added successfully!');
+              }
+              // Reload the page to show updated inventory
+              location.reload();
+            } else {
+              alert(data.error || 'Failed to add/update inventory item');
+            }
+          } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to add/update inventory item');
+          }
+        });
+        console.log('Inventory button handler attached');
+      } else {
+        console.log('Inventory button not found');
+      }
+
+      // Add inventory delete button handler
+      document.querySelectorAll('.delete-inv-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          if (!confirm('Delete this inventory item?')) return;
+          const invId = this.getAttribute('data-inv-id');
+          try {
+            const response = await fetch('/api/delete_inventory', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ inv_id: invId })
+            });
+            const data = await response.json();
+            if (data.success) {
+              // Remove the item from DOM
+              this.closest('div[data-inv-id]').remove();
+              // Optionally show a message
+              // alert('Inventory item deleted!');
+              // If no items left, show 'No inventory'
+              if (document.querySelectorAll('.delete-inv-btn').length === 0) {
+                document.getElementById('invList').innerHTML = '<div class="muted small">No inventory</div>';
+              }
+            } else {
+              alert(data.error || 'Failed to delete inventory item');
+            }
+          } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to delete inventory item');
+          }
+        });
+      });
+
+      // Add export button handler
+      var exportBtn = document.getElementById('exportReport');
+      console.log('Looking for export button:', exportBtn);
+      if (exportBtn) {
+        exportBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('Export button clicked, redirecting to seasonal report...');
+          // Test with alert first
+          if (confirm('Redirect to seasonal report page?')) {
+            try {
+              console.log('Attempting redirect to /seasonal_report');
+              window.location.href = '/seasonal_report';
+            } catch (error) {
+              console.error('Redirect error:', error);
+              alert('Failed to redirect to seasonal report page: ' + error.message);
+            }
+          }
+        });
+        console.log('Export button handler attached successfully');
+      } else {
+        console.error('Export button not found! Check if ID exportReport exists in DOM');
+      }
+
+      // Add other sidebar button handlers
+      var sendReminderBtn = document.getElementById('sendReminder');
+      if (sendReminderBtn) {
+        sendReminderBtn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          try {
+            const response = await fetch('/api/send_reminder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include'
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+              alert(data.message);
+            } else {
+              alert(data.error || 'Failed to send reminder');
+            }
+          } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to send reminder');
+          }
+        });
+      }
+
+      var clearDataBtn = document.getElementById('clearData');
+      if (clearDataBtn) {
+        clearDataBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          if (confirm('Clear all saved data?')) {
+            alert('Clear Data button clicked!');
+          }
+        });
+      }
+
+      // Add expense button handler
+      var expenseBtn = document.getElementById('addExpense');
+      if (expenseBtn) {
+        expenseBtn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          const item = document.getElementById('expItem').value.trim();
+          const amount = Number(document.getElementById('expAmount').value);
+          const season = document.getElementById('expSeason').value;
+          
+          if (!item || !amount) {
+            alert('Please enter item and amount');
+            return;
+          }
+
+          try {
+            const response = await fetch('/api/expense', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ item, amount, season })
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+              // Add the new expense row to the table
+              const tb = document.querySelector('#expTable tbody');
+              // Check if there's a "No expenses" row and remove it
+              const noExpRow = tb.querySelector('tr td[colspan="4"]');
+              if (noExpRow) {
+                noExpRow.closest('tr').remove();
+              }
+              const tr = document.createElement('tr');
+              tr.setAttribute('data-exp-id', data.id);
+              tr.innerHTML = `<td>${data.item}</td><td>₹${data.amount}</td><td>${data.season}</td><td><button class="small delete-exp-btn" data-exp-id="${data.id}" style="background:#e74c3c;color:white;border:none;padding:2px 8px;border-radius:6px;cursor:pointer">🗑</button></td>`;
+              tb.appendChild(tr);
+              // Attach delete handler to the new button
+              attachExpenseDeleteHandler(tr.querySelector('.delete-exp-btn'));
+              // Clear the form
+              document.getElementById('expItem').value = '';
+              document.getElementById('expAmount').value = '';
+              // Show success message
+              alert('Expense added successfully!');
+            } else {
+              alert(data.error || 'Failed to add expense');
+            }
+          } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to add expense');
+          }
+        });
+        console.log('Expense button handler attached');
+      } else {
+        console.log('Expense button not found');
+      }
+
+      // Function to attach delete handler to expense buttons
+      function attachExpenseDeleteHandler(btn) {
+        btn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          if (!confirm('Delete this expense?')) return;
+          const expId = this.getAttribute('data-exp-id');
+          try {
+            const response = await fetch('/api/delete_expense', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ exp_id: expId })
+            });
+            const data = await response.json();
+            if (data.success) {
+              // Remove the expense row from DOM
+              this.closest('tr').remove();
+              // If no expenses left, show 'No expenses'
+              if (document.querySelectorAll('.delete-exp-btn').length === 0) {
+                const tb = document.querySelector('#expTable tbody');
+                tb.innerHTML = '<tr><td colspan="4" class="muted">No expenses</td></tr>';
+              }
+            } else {
+              alert(data.error || 'Failed to delete expense');
+            }
+          } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to delete expense');
+          }
+        });
+      }
+
+      // Add delete handlers to existing expense buttons
+      document.querySelectorAll('.delete-exp-btn').forEach(function(btn) {
+        attachExpenseDeleteHandler(btn);
+      });
+
+      // Add crop planning button handler
+      var cropPlanningBtn = document.getElementById('cropPlanningBtn');
+      if (cropPlanningBtn) {
+        cropPlanningBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          // Redirect to crop planning page
+          window.location.href = '/crop_planning';
+        });
+        console.log('Crop Planning button handler attached');
+      } else {
+        console.log('Crop Planning button not found');
+      }
     });
   </script>
             </div>
@@ -259,19 +512,40 @@
 
       <div class="card">
         <h3 style="margin-top:0">Expense Log</h3>
-        <div style="display:flex;gap:8px">
-          <input id="expItem" placeholder="Item/Reason" />
-          <input id="expAmount" placeholder="Amount" type="number" />
-          <select id="expSeason"><option value="kharif">Kharif</option><option value="rabi">Rabi</option><option value="zaid">Zaid</option></select>
-          <button id="addExpense" class="btn">Add</button>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-direction:column;align-items:stretch">
+          <div style="display:flex;gap:8px;">
+            <input id="expItem" placeholder="Item/Reason" />
+            <input id="expAmount" placeholder="Amount" type="number" />
+            <select id="expSeason"><option value="kharif">Kharif</option><option value="rabi">Rabi</option><option value="zaid">Zaid</option></select>
+          </div>
+          <button id="addExpense" class="btn small" style="margin-top:6px;width:100%">Add</button>
         </div>
         <div style="margin-top:12px">
-          <table id="expTable"><thead><tr><th>Item</th><th>Amount</th><th>Season</th><th></th></tr></thead><tbody></tbody></table>
+          <table id="expTable"><thead><tr><th>Item</th><th>Amount</th><th>Season</th><th></th></tr></thead><tbody>
+            {% if expenses and expenses|length > 0 %}
+              {% for e in expenses %}
+                <tr data-exp-id="{{ e.id }}">
+                  <td>{{ e.item }}</td>
+                  <td>₹{{ e.amount }}</td>
+                  <td>{{ e.season }}</td>
+                  <td><button class="small delete-exp-btn" data-exp-id="{{ e.id }}" style="background:#e74c3c;color:white;border:none;padding:2px 8px;border-radius:6px;cursor:pointer">🗑</button></td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr><td colspan="4" class="muted">No expenses</td></tr>
+            {% endif %}
+          </tbody></table>
         </div>
       </div>
 
     </section>
   </main>
+
+  <div style="text-align:center;padding:20px">
+    <button id="cropPlanningBtn" class="btn" style="font-size:16px;padding:12px 24px;background:#27ae60;border-radius:10px">
+      🌾 Crop Planning & Seasonal Guide
+    </button>
+  </div>
 
   <footer>
     Prototype — data stored in local browser storage. Replace hooks with backend integrations for production.
@@ -286,7 +560,7 @@
     function loadState(){ const s = localStorage.getItem(LS_KEY); if(s) state = JSON.parse(s); }
 
     // --- Render functions ---
-    function renderAll(){ renderProfile(); renderInv(); renderTasks(); renderExpenses(); renderReport(); }
+    function renderAll(){ renderProfile(); renderInv(); renderTasks(); renderReport(); }
 
     function renderProfile(){ document.getElementById('farmName').innerText = state.profile?.name || '—'; document.getElementById('farmMeta').innerText = state.profile?.meta || 'Set up your farm profile'; document.getElementById('currentFarmName').innerText = state.profile?.name ? state.profile.name : 'Not signed in'; }
 
@@ -305,13 +579,14 @@
 
   // No JS fetch for tasks needed; tasks are rendered server-side
 
-    function renderExpenses(){ const tb = document.querySelector('#expTable tbody'); tb.innerHTML=''; if(state.expenses.length===0){ tb.innerHTML='<tr><td colspan="4" class="muted">No expenses</td></tr>'; return }
-      state.expenses.forEach((e,idx)=>{ const tr = document.createElement('tr'); tr.innerHTML = <td>${e.item}</td><td>${e.amount}</td><td>${e.season}</td><td><button class="small" onclick="removeExpense(${idx})">Del</button></td>; tb.appendChild(tr); }) }
-
     function renderReport(){ const area = document.getElementById('reportArea'); const total = state.expenses.reduce((s,e)=>s+Number(e.amount),0); const bySeason = state.expenses.reduce((acc,e)=>{ acc[e.season]= (acc[e.season]||0)+Number(e.amount); return acc },{}); area.innerHTML = <div class="small">Total spent: ₹${total}</div><div class="muted small">${Object.entries(bySeason).map(([k,v])=>k+': ₹'+v).join(' · ')}</div> }
 
     // --- Inventory actions ---
-    function addInv(){ const name = document.getElementById('invName').value.trim(); const qty = document.getElementById('invQty').value || 1; if(!name) return alert('Enter item name'); state.inventory.push({name,qty}); document.getElementById('invName').value=''; document.getElementById('invQty').value=''; saveState(); }
+    // Remove old addInv function and add new handler for newAddInv
+    // New Inventory Add button handler
+    function newAddInvHandler() {
+      alert('New Inventory Add button clicked!'); // Test alert
+    }
     function editInv(idx){ const it = state.inventory[idx]; const newName = prompt('Item name', it.name); if(newName===null) return; const newQty = prompt('Qty', it.qty); if(newQty===null) return; state.inventory[idx] = {name:newName, qty:newQty}; saveState(); }
     function removeInv(idx){ if(!confirm('Remove item?')) return; state.inventory.splice(idx,1); saveState(); }
 
@@ -340,12 +615,40 @@
     function deleteTask(idx){ if(!confirm('Delete task?')) return; state.tasks.splice(idx,1); saveState(); }
 
     // --- Expenses ---
-    function addExpense(){ const item = document.getElementById('expItem').value.trim(); const amount = Number(document.getElementById('expAmount').value); const season = document.getElementById('expSeason').value; if(!item||!amount) return alert('Enter item and positive amount'); state.expenses.push({item,amount,season}); document.getElementById('expItem').value=''; document.getElementById('expAmount').value=''; saveState(); }
+    async function addExpense() {
+      const item = document.getElementById('expItem').value.trim();
+      const amount = Number(document.getElementById('expAmount').value);
+      const season = document.getElementById('expSeason').value;
+      if (!item || !amount) return alert('Enter item and positive amount');
+      try {
+        const response = await fetch('/api/expense', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ item, amount, season })
+        });
+        const data = await response.json();
+        if (data.success) {
+          // Add the new expense row to the table
+          const tb = document.querySelector('#expTable tbody');
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${data.item}</td><td>${data.amount}</td><td>${data.season}</td><td></td>`;
+          tb.appendChild(tr);
+          // Clear the form
+          document.getElementById('expItem').value = '';
+          document.getElementById('expAmount').value = '';
+        } else {
+          alert(data.error || 'Failed to add expense');
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to add expense');
+      }
+    }
     function removeExpense(idx){ state.expenses.splice(idx,1); saveState(); }
 
     // --- Save / Load ---
-    document.getElementById('addInv').addEventListener('click', addInv);
-    document.getElementById('addQuickTask').addEventListener('click', addQuickTask);
+    // Remove duplicate event handlers - all buttons are handled in DOMContentLoaded now
     // Intercept addTaskForm submit to send to backend and refresh tasks
     document.getElementById('addTaskForm').addEventListener('submit', function(e) {
       e.preventDefault();
@@ -373,7 +676,6 @@
     document.getElementById('cancelTask').addEventListener('click', ()=>{ document.getElementById('taskTitle').value=''; document.getElementById('taskDate').value=''; document.getElementById('taskNotes').value=''; });
     document.getElementById('openTaskForm').addEventListener('click', ()=>{ document.getElementById('taskTitle').focus(); });
     document.getElementById('filterStatus').addEventListener('change', renderTasks);
-    document.getElementById('addExpense').addEventListener('click', addExpense);
 
     // --- Profile/Login ---
     document.getElementById('openLogin').addEventListener('click', ()=>{
@@ -381,26 +683,17 @@
     });
 
     // --- Reminders (simulation) ---
-    document.getElementById('sendReminder').addEventListener('click', ()=>{
-      const pending = state.tasks.filter(t=>t.status==='pending'); if(!pending.length) return alert('No pending tasks to remind');
-      // This is where you'd call a backend endpoint that triggers Twilio / SendGrid etc.
-      // For prototype we show an alert and log to console.
-      alert('Reminders simulated: ' + pending.length + ' pending tasks — check console for details.');
-      console.log('Simulated reminders payload:', {to: state.profile?.name || 'farmer@example.com', tasks: pending});
-    });
+    // Handled in DOMContentLoaded now
 
     // --- Clear data ---
-    document.getElementById('clearData').addEventListener('click', ()=>{ if(!confirm('Clear all saved data?')) return; state={profile:null,tasks:[],inventory:[],expenses:[]}; saveState(); localStorage.removeItem(LS_KEY); renderAll(); })
+    // Handled in DOMContentLoaded now
 
     // export
-    document.getElementById('exportReport').addEventListener('click', ()=>{
-      const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='farm_data.json'; a.click(); URL.revokeObjectURL(url);
-    });
+    // Handled in DOMContentLoaded now
 
 
 
   // initialization
-  loadState();
 
     // Expose some functions for inline onclick handlers
     window.editInv = editInv; window.removeInv = removeInv; window.toggleDone = toggleDone; window.deleteTask = deleteTask; window.removeExpense = removeExpense;

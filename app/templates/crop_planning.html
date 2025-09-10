@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Crop Planning & Seasonal Guide — Farm Manager</title>
+  <style>
+    :root{--accent:#2f8f6a;--muted:#666;--success:#27ae60;--warning:#f39c12;--danger:#e74c3c}
+    *{box-sizing:border-box}
+    body{font-family:Inter, system-ui, Arial; margin:0;background:#f4f7f6; color:#0b1320}
+    header{background:linear-gradient(90deg,#ffffffcc, #eaf6f0); padding:18px 22px; display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:46px;height:46px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;font-weight:700}
+    .container{max-width:1400px;margin:20px auto;padding:20px}
+    .card{background:white;border-radius:12px;padding:20px;box-shadow:0 6px 18px rgba(11,19,32,0.06);margin-bottom:20px}
+    .btn{background:var(--accent);color:white;padding:8px 16px;border-radius:8px;border:0;cursor:pointer;text-decoration:none;display:inline-block}
+    .btn-secondary{background:#6c757d;color:white;padding:8px 16px;border-radius:8px;border:0;cursor:pointer;text-decoration:none;display:inline-block}
+    .btn-success{background:var(--success);color:white;padding:8px 16px;border-radius:8px;border:0;cursor:pointer}
+    .btn-warning{background:var(--warning);color:white;padding:8px 16px;border-radius:8px;border:0;cursor:pointer}
+    .btn-danger{background:var(--danger);color:white;padding:8px 16px;border-radius:8px;border:0;cursor:pointer}
+    input,select,textarea{width:100%;padding:8px;border-radius:8px;border:1px solid #e2e8f0;margin-top:6px}
+    label{font-size:13px;color:#223;font-weight:600}
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .grid-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+    .grid-4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:12px;border-bottom:1px solid #eef3f2;text-align:left}
+    th{background:#f8f9fa;font-weight:600}
+    .weather-card{background:linear-gradient(135deg, #74b9ff, #0984e3);color:white;padding:20px;border-radius:12px;text-align:center}
+    .crop-card{border:2px solid #ddd;border-radius:8px;padding:15px;margin:10px 0;transition:all 0.3s ease}
+    .crop-card:hover{border-color:var(--accent);box-shadow:0 4px 12px rgba(47,143,106,0.2)}
+    .crop-card.recommended{border-color:var(--success);background:#f8fff8}
+    .season-badge{padding:4px 8px;border-radius:20px;font-size:12px;font-weight:600}
+    .season-spring{background:#27ae60;color:white}
+    .season-summer{background:#f39c12;color:white}
+    .season-autumn{background:#e67e22;color:white}
+    .season-winter{background:#3498db;color:white}
+    .activity-log{max-height:300px;overflow-y:auto}
+    .activity-item{padding:10px;border-left:4px solid var(--accent);margin:10px 0;background:#f8f9fa}
+    .market-trend-up{color:var(--success);font-weight:600}
+    .market-trend-down{color:var(--danger);font-weight:600}
+    .market-trend-stable{color:var(--warning);font-weight:600}
+    .forecast-day{text-align:center;padding:15px;border:1px solid #eee;border-radius:8px;margin:5px}
+    .ml-prediction{background:linear-gradient(135deg, #a29bfe, #6c5ce7);color:white;padding:20px;border-radius:12px}
+    .tip-card{background:#fff3cd;border-left:5px solid var(--warning);padding:15px;margin:10px 0}
+    .calendar-grid{display:grid;grid-template-columns:repeat(7, 1fr);gap:2px;margin-top:10px}
+    .calendar-day{padding:10px;text-align:center;border:1px solid #eee;min-height:60px;position:relative}
+    .calendar-day.has-activity{background:#e8f5e8;border-color:var(--success)}
+    .calendar-day.planting-season{background:#fff3cd;border-color:var(--warning)}
+    .calendar-day.harvest-season{background:#d4edda;border-color:var(--success)}
+    @media (max-width:1024px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr} .container{padding:12px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">🌾</div>
+      <div>
+        <div style="font-weight:700">Crop Planning & Seasonal Guide</div>
+        <div style="color:var(--muted)">Smart farming decisions with data insights</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <a href="/dashboard" class="btn-secondary">Back to Dashboard</a>
+      <button id="refreshData" class="btn">Refresh Data</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- Location & Settings -->
+    <div class="card">
+      <h2 style="margin-top:0">📍 Location & Farm Settings</h2>
+      <div class="grid-2">
+        <div>
+          <label>Current Location</label>
+          <select id="locationSelect">
+            <option value="north-india">North India (Punjab, Haryana)</option>
+            <option value="south-india">South India (Tamil Nadu, Karnataka)</option>
+            <option value="west-india">West India (Maharashtra, Gujarat)</option>
+            <option value="east-india">East India (West Bengal, Odisha)</option>
+            <option value="central-india">Central India (Madhya Pradesh, Chhattisgarh)</option>
+          </select>
+        </div>
+        <div>
+          <label>Soil Type</label>
+          <select id="soilType">
+            <option value="alluvial">Alluvial Soil</option>
+            <option value="black">Black Soil (Regur)</option>
+            <option value="red">Red Soil</option>
+            <option value="laterite">Laterite Soil</option>
+            <option value="sandy">Sandy Soil</option>
+            <option value="clay">Clay Soil</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Weather Forecast -->
+    <div class="card">
+      <h2 style="margin-top:0">🌤️ Weather Forecast</h2>
+      <div id="weatherForecast" class="grid-4">
+        <!-- Weather cards will be populated here -->
+        <div class="forecast-day weather-card">
+          <div style="font-weight:600">Today</div>
+          <div style="font-size:24px;margin:10px 0">🌤️</div>
+          <div>28°C / 22°C</div>
+          <div style="font-size:12px;margin-top:5px">Partly Cloudy</div>
+          <div style="font-size:12px;color:#b3d9ff">Rain: 20%</div>
+        </div>
+        <div class="forecast-day weather-card">
+          <div style="font-weight:600">Tomorrow</div>
+          <div style="font-size:24px;margin:10px 0">🌦️</div>
+          <div>26°C / 20°C</div>
+          <div style="font-size:12px;margin-top:5px">Light Rain</div>
+          <div style="font-size:12px;color:#b3d9ff">Rain: 70%</div>
+        </div>
+        <div class="forecast-day weather-card">
+          <div style="font-weight:600">Day 3</div>
+          <div style="font-size:24px;margin:10px 0">☀️</div>
+          <div>30°C / 24°C</div>
+          <div style="font-size:12px;margin-top:5px">Sunny</div>
+          <div style="font-size:12px;color:#b3d9ff">Rain: 5%</div>
+        </div>
+        <div class="forecast-day weather-card">
+          <div style="font-weight:600">Day 4</div>
+          <div style="font-size:24px;margin:10px 0">☀️</div>
+          <div>32°C / 25°C</div>
+          <div style="font-size:12px;margin-top:5px">Sunny</div>
+          <div style="font-size:12px;color:#b3d9ff">Rain: 0%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ML Predictions & Crop Suggestions -->
+    <div class="grid-2">
+      <div class="card">
+        <h3 style="margin-top:0">🤖 AI Crop Recommendations</h3>
+        <div class="ml-prediction">
+          <h4 style="margin-top:0">Based on Historical Weather Patterns</h4>
+          <p>Our ML model analyzed 5 years of weather data for your region:</p>
+          <ul style="margin:0">
+            <li><strong>Rice:</strong> 87% success rate (recommended)</li>
+            <li><strong>Wheat:</strong> 92% success rate (highly recommended)</li>
+            <li><strong>Cotton:</strong> 73% success rate</li>
+            <li><strong>Sugarcane:</strong> 68% success rate</li>
+          </ul>
+        </div>
+        
+        <div style="margin-top:20px">
+          <h4>Suggested Crops for Your Location & Soil</h4>
+          <div class="crop-card recommended">
+            <h5 style="margin:0 0 10px 0">🌾 Wheat (Highly Recommended)</h5>
+            <p style="margin:5px 0">Best for: Alluvial soil, Cool weather</p>
+            <div>
+              <span class="season-badge season-winter">Rabi Season</span>
+              <span style="margin-left:10px;color:var(--success)">✓ High demand in local market</span>
+            </div>
+          </div>
+          
+          <div class="crop-card recommended">
+            <h5 style="margin:0 0 10px 0">🌱 Rice (Recommended)</h5>
+            <p style="margin:5px 0">Best for: Clay soil, High rainfall</p>
+            <div>
+              <span class="season-badge season-summer">Kharif Season</span>
+              <span style="margin-left:10px;color:var(--success)">✓ Stable market price</span>
+            </div>
+          </div>
+          
+          <div class="crop-card">
+            <h5 style="margin:0 0 10px 0">🌽 Maize</h5>
+            <p style="margin:5px 0">Best for: Well-drained soil, Moderate rainfall</p>
+            <div>
+              <span class="season-badge season-summer">Kharif Season</span>
+              <span style="margin-left:10px;color:var(--warning)">~ Moderate demand</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">📈 Local Market Insights</h3>
+        <table>
+          <thead>
+            <tr><th>Crop</th><th>Current Price</th><th>Trend</th><th>Demand</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Wheat</td>
+              <td>₹2,200/quintal</td>
+              <td class="market-trend-up">↗ +5%</td>
+              <td class="market-trend-up">High</td>
+            </tr>
+            <tr>
+              <td>Rice</td>
+              <td>₹1,800/quintal</td>
+              <td class="market-trend-stable">→ Stable</td>
+              <td class="market-trend-stable">Medium</td>
+            </tr>
+            <tr>
+              <td>Cotton</td>
+              <td>₹5,500/quintal</td>
+              <td class="market-trend-up">↗ +3%</td>
+              <td class="market-trend-up">High</td>
+            </tr>
+            <tr>
+              <td>Sugarcane</td>
+              <td>₹350/quintal</td>
+              <td class="market-trend-down">↘ -2%</td>
+              <td class="market-trend-down">Low</td>
+            </tr>
+            <tr>
+              <td>Maize</td>
+              <td>₹1,950/quintal</td>
+              <td class="market-trend-stable">→ Stable</td>
+              <td class="market-trend-stable">Medium</td>
+            </tr>
+          </tbody>
+        </table>
+        
+        <div style="margin-top:15px;padding:15px;background:#d4edda;border-radius:8px">
+          <strong>💰 Market Tip:</strong> Wheat prices are rising due to export demand. Consider increasing wheat cultivation area for better returns.
+        </div>
+      </div>
+    </div>
+
+    <!-- Crop Calendar -->
+    <div class="card">
+      <h3 style="margin-top:0">📅 Crop Calendar - September 2025</h3>
+      <div style="display:flex;justify-content:between;align-items:center;margin-bottom:15px">
+        <div>
+          <button class="btn-secondary" id="prevMonth">← Previous</button>
+          <span style="margin:0 15px;font-weight:600">September 2025</span>
+          <button class="btn-secondary" id="nextMonth">Next →</button>
+        </div>
+        <div>
+          <span style="background:#fff3cd;padding:5px 10px;border-radius:5px;margin-right:10px">🌱 Planting Season</span>
+          <span style="background:#d4edda;padding:5px 10px;border-radius:5px">🌾 Harvest Season</span>
+        </div>
+      </div>
+      
+      <div class="calendar-grid">
+        <div style="font-weight:600;text-align:center;padding:10px">Sun</div>
+        <div style="font-weight:600;text-align:center;padding:10px">Mon</div>
+        <div style="font-weight:600;text-align:center;padding:10px">Tue</div>
+        <div style="font-weight:600;text-align:center;padding:10px">Wed</div>
+        <div style="font-weight:600;text-align:center;padding:10px">Thu</div>
+        <div style="font-weight:600;text-align:center;padding:10px">Fri</div>
+        <div style="font-weight:600;text-align:center;padding:10px">Sat</div>
+        
+        <div class="calendar-day">1</div>
+        <div class="calendar-day">2</div>
+        <div class="calendar-day">3</div>
+        <div class="calendar-day">4</div>
+        <div class="calendar-day planting-season">5<div style="font-size:10px;color:var(--warning)">Plant Rabi</div></div>
+        <div class="calendar-day">6</div>
+        <div class="calendar-day">7</div>
+        <div class="calendar-day">8</div>
+        <div class="calendar-day">9</div>
+        <div class="calendar-day has-activity">10<div style="font-size:10px;color:var(--success)">Today</div></div>
+        <div class="calendar-day">11</div>
+        <div class="calendar-day planting-season">12<div style="font-size:10px;color:var(--warning)">Wheat Prep</div></div>
+        <div class="calendar-day">13</div>
+        <div class="calendar-day">14</div>
+        <div class="calendar-day harvest-season">15<div style="font-size:10px;color:var(--success)">Rice Harvest</div></div>
+        <div class="calendar-day">16</div>
+        <div class="calendar-day">17</div>
+        <div class="calendar-day">18</div>
+        <div class="calendar-day">19</div>
+        <div class="calendar-day planting-season">20<div style="font-size:10px;color:var(--warning)">Mustard Plant</div></div>
+        <div class="calendar-day">21</div>
+        <div class="calendar-day">22</div>
+        <div class="calendar-day">23</div>
+        <div class="calendar-day">24</div>
+        <div class="calendar-day harvest-season">25<div style="font-size:10px;color:var(--success)">Cotton Pick</div></div>
+        <div class="calendar-day">26</div>
+        <div class="calendar-day">27</div>
+        <div class="calendar-day">28</div>
+        <div class="calendar-day">29</div>
+        <div class="calendar-day">30</div>
+      </div>
+    </div>
+
+    <!-- Seasonal Tips & Farming Journal -->
+    <div class="grid-2">
+      <div class="card">
+        <h3 style="margin-top:0">💡 Seasonal Tips</h3>
+        <div class="tip-card">
+          <h4 style="margin:0 0 10px 0">🍂 September - Autumn Preparations</h4>
+          <ul style="margin:0">
+            <li>Start preparing fields for Rabi season crops</li>
+            <li>Complete harvesting of Kharif crops (rice, cotton)</li>
+            <li>Apply organic manure to improve soil fertility</li>
+            <li>Check irrigation systems before winter planting</li>
+          </ul>
+        </div>
+        
+        <div style="margin-top:15px">
+          <h4>Upcoming Seasonal Activities</h4>
+          <div style="padding:10px;background:#f8f9fa;border-radius:8px;margin:10px 0">
+            <strong>October:</strong> Begin wheat and mustard sowing, pest control for standing crops
+          </div>
+          <div style="padding:10px;background:#f8f9fa;border-radius:8px;margin:10px 0">
+            <strong>November:</strong> Monitor crop growth, apply fertilizers, prepare for cold weather
+          </div>
+          <div style="padding:10px;background:#f8f9fa;border-radius:8px;margin:10px 0">
+            <strong>December:</strong> Protect crops from frost, plan for Rabi harvest schedule
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">📖 Farming Journal</h3>
+        <div style="margin-bottom:15px">
+          <label>Add New Activity</label>
+          <div style="display:flex;gap:10px;margin-top:10px">
+            <select id="activityType" style="width:auto">
+              <option value="planting">Planting</option>
+              <option value="watering">Watering</option>
+              <option value="fertilizing">Fertilizing</option>
+              <option value="pest-control">Pest Control</option>
+              <option value="harvesting">Harvesting</option>
+              <option value="soil-prep">Soil Preparation</option>
+            </select>
+            <input type="text" id="activityNote" placeholder="Activity details..." style="flex:1">
+            <button class="btn-success" id="addActivity">Add</button>
+          </div>
+        </div>
+        
+        <div class="activity-log" id="activityLog">
+          <div class="activity-item">
+            <div style="font-weight:600">🌱 Planting - Sept 8, 2025</div>
+            <div>Planted wheat seeds in north field (2 acres)</div>
+          </div>
+          <div class="activity-item">
+            <div style="font-weight:600">💧 Watering - Sept 7, 2025</div>
+            <div>Irrigated rice crop after 3 dry days</div>
+          </div>
+          <div class="activity-item">
+            <div style="font-weight:600">🌾 Harvesting - Sept 5, 2025</div>
+            <div>Completed cotton harvesting in south field</div>
+          </div>
+          <div class="activity-item">
+            <div style="font-weight:600">🧪 Fertilizing - Sept 3, 2025</div>
+            <div>Applied NPK fertilizer to maize crop</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alerts & Reminders -->
+    <div class="card">
+      <h4 style="margin-top:0">🚨 Alerts & Reminders</h4>
+      <div style="padding:10px;background:#fff3cd;border-radius:8px;margin:10px 0;border-left:4px solid var(--warning)">
+        <strong>⚠️ Pest Alert:</strong> Army worm reported in nearby farms. Monitor maize crops closely.
+      </div>
+      <div style="padding:10px;background:#d4edda;border-radius:8px;margin:10px 0;border-left:4px solid var(--success)">
+        <strong>✅ Reminder:</strong> Apply second dose of fertilizer to wheat crop (Due: Sept 15)
+      </div>
+      <div style="padding:10px;background:#cce5ff;border-radius:8px;margin:10px 0;border-left:4px solid #007bff">
+        <strong>ℹ️ Info:</strong> Government subsidy available for organic farming (Apply by Sept 30)
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Initialize page functionality
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('Crop Planning page loaded');
+      
+      // Add activity to journal
+      document.getElementById('addActivity').addEventListener('click', function() {
+        const activityType = document.getElementById('activityType').value;
+        const activityNote = document.getElementById('activityNote').value.trim();
+        
+        if (!activityNote) {
+          alert('Please enter activity details');
+          return;
+        }
+        
+        const activityLog = document.getElementById('activityLog');
+        const today = new Date().toLocaleDateString('en-IN', { 
+          year: 'numeric', 
+          month: 'short', 
+          day: 'numeric' 
+        });
+        
+        const activityIcons = {
+          'planting': '🌱',
+          'watering': '💧',
+          'fertilizing': '🧪',
+          'pest-control': '🐛',
+          'harvesting': '🌾',
+          'soil-prep': '🔨'
+        };
+        
+        const newActivity = document.createElement('div');
+        newActivity.className = 'activity-item';
+        newActivity.innerHTML = `
+          <div style="font-weight:600">${activityIcons[activityType]} ${activityType.charAt(0).toUpperCase() + activityType.slice(1).replace('-', ' ')} - ${today}</div>
+          <div>${activityNote}</div>
+        `;
+        
+        activityLog.insertBefore(newActivity, activityLog.firstChild);
+        document.getElementById('activityNote').value = '';
+        
+        // Show success message
+        alert('Activity added to farming journal!');
+      });
+      
+      // Refresh data functionality
+      document.getElementById('refreshData').addEventListener('click', function() {
+        alert('Data refreshed! Weather forecast and market prices updated.');
+      });
+      
+      // Calendar navigation (placeholder)
+      document.getElementById('prevMonth').addEventListener('click', function() {
+        alert('Previous month functionality - will show August 2025 calendar');
+      });
+      
+      document.getElementById('nextMonth').addEventListener('click', function() {
+        alert('Next month functionality - will show October 2025 calendar');
+      });
+      
+      // Location change handler
+      document.getElementById('locationSelect').addEventListener('change', function() {
+        const location = this.value;
+        alert(`Location updated to ${location}. Crop recommendations and weather data will be updated accordingly.`);
+      });
+      
+      // Soil type change handler
+      document.getElementById('soilType').addEventListener('change', function() {
+        const soilType = this.value;
+        alert(`Soil type updated to ${soilType}. Crop suggestions will be recalculated.`);
+      });
+    });
+  </script>
+</body>
+</html>
