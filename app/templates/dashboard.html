@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Farm Task & Inventory Manager — Prototype</title>
+  <style>
+    :root{--accent:#2f8f6a;--muted:#666}
+    *{box-sizing:border-box}
+    body{font-family:Inter, system-ui, Arial; margin:0;background:#f4f7f6; color:#0b1320}
+    header{background:linear-gradient(90deg,#ffffffcc, #eaf6f0); padding:18px 22px; display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:46px;height:46px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:white;font-weight:700}
+    .container{display:grid;grid-template-columns:320px 1fr;gap:20px;padding:20px;max-width:1200px;margin:18px auto}
+    .card{background:white;border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(11,19,32,0.06)}
+    .sidebar{position:sticky;top:22px;height:calc(100vh - 88px);overflow:auto;padding-bottom:80px}
+    .profile h3{margin:6px 0 2px}
+    .muted{color:var(--muted);font-size:13px}
+    .btn{background:var(--accent);color:white;padding:8px 12px;border-radius:8px;border:0;cursor:pointer}
+    input,select,textarea{width:100%;padding:8px;border-radius:8px;border:1px solid #e2e8f0;margin-top:6px}
+    label{font-size:13px;color:#223}
+    .nav{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+    .nav button{background:transparent;border:0;text-align:left;padding:8px;border-radius:8px;cursor:pointer}
+    .grid-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px solid #eef3f2;text-align:left}
+    .small{font-size:13px;padding:6px 8px}
+    .calendar-list{max-height:320px;overflow:auto}
+    .task-done{text-decoration:line-through;color:#9aa}
+    footer{padding:12px;text-align:center;color:var(--muted);font-size:13px}
+    @media (max-width:880px){.container{grid-template-columns:1fr; padding:12px} .sidebar{height:auto;position:relative}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">FM</div>
+      <div>
+        <div style="font-weight:700">Farm Task & Inventory</div>
+        <div class="muted">Manage tasks, inventory & expenses</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <div id="currentFarmName" style="color:#2f8f6a;font-size:1.4em;font-weight:700;">
+        {% if username %}
+          {{ username }}
+        {% else %}
+          Not signed in
+        {% endif %}
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <aside class="sidebar card">
+      <div class="profile">
+        <h3 id="farmName">—</h3>
+        <div class="muted" id="farmMeta">Set up your farm profile</div>
+      </div>
+
+      <div style="margin-top:14px">
+        <label>Quick add task</label>
+        <input id="quickTaskTitle" placeholder="Task (e.g., Water wheat)" />
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="quickTaskDate" type="date" />
+          <button id="addQuickTask" class="btn small">Add</button>
+        </div>
+      </div>
+
+      <div style="margin-top:18px">
+        <label>Inventory</label>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input id="invName" placeholder="Item" />
+          <input id="invQty" placeholder="Qty" />
+          <button id="addInv" class="btn small">Add</button>
+        </div>
+        <div id="invList" style="margin-top:10px"></div>
+      </div>
+
+      <div style="margin-top:18px">
+        <label>Balance / Seasonal report</label>
+        <div id="reportArea" style="margin-top:8px"></div>
+        <button id="exportReport" class="small" style="margin-top:8px">Export JSON</button>
+      </div>
+
+      <div style="margin-top:18px">
+        <label>Reminders</label>
+        <div class="muted small" style="margin-top:6px">Simulate sending reminders</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="sendReminder" class="btn small">Send Reminder</button>
+          <button id="clearData" class="small">Clear All</button>
+        </div>
+      </div>
+
+    </aside>
+
+    <section>
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <h2 style="margin:0">Task Planner</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="filterStatus"><option value="all">All</option><option value="pending">Pending</option><option value="done">Done</option></select>
+            <button id="openTaskForm" class="btn small">New Task</button>
+          </div>
+        </div>
+
+        <div style="margin-top:12px" class="grid-two">
+          <div>
+            <div class="calendar-list card" id="taskList" style="padding:10px">
+              {% if tasks and tasks|length > 0 %}
+                {% for t in tasks %}
+                  <div class="task-row" data-task-id="{{ t.id }}" style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #eef3f2;">
+                    <div>
+                      <div style="font-weight:600">{{ t.title }}</div>
+                      <div class="muted small">{{ t.date }}{% if t.notes %} · {{ t.notes }}{% endif %}</div>
+                    </div>
+                    <button class="small delete-task-btn" data-task-id="{{ t.id }}" style="background:#e74c3c;color:white;border:none;padding:4px 10px;border-radius:6px;cursor:pointer">Delete</button>
+                  </div>
+                {% endfor %}
+              {% else %}
+                <div class="muted">No tasks</div>
+              {% endif %}
+  <script>
+    // ...existing code...
+  // Removed duplicate delete-task-btn event handler to prevent double confirmation dialogs
+  </script>
+            </div>
+          </div>
+          <div>
+            <div class="card" style="padding:12px">
+              <h4 style="margin:0 0 8px 0">Calendar</h4>
+              <div id="calendarContainer"></div>
+              <div id="upcoming" class="muted small">No tasks yet.</div>
+  <script>
+    // --- Calendar UI ---
+    function renderCalendar(tasks) {
+      const container = document.getElementById('calendarContainer');
+      if (!container) return;
+      // Get all task dates as yyyy-mm-dd
+      // Use local date string (yyyy-mm-dd) to avoid UTC offset issues
+      const pad = n => n.toString().padStart(2, '0');
+      const taskDates = (tasks || []).map(t => {
+        const d = new Date(t.date);
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+      });
+      // Get current month/year
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = today.getMonth();
+      // First day of month
+      const firstDay = new Date(year, month, 1);
+      // Last day of month
+      const lastDay = new Date(year, month + 1, 0);
+      // Build calendar grid
+      let html = '<table style="width:100%;text-align:center;font-size:14px"><thead><tr>';
+      const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      for (let d of days) html += `<th>${d}</th>`;
+      html += '</tr></thead><tbody><tr>';
+      let dayOfWeek = firstDay.getDay();
+      for (let i = 0; i < dayOfWeek; i++) html += '<td></td>';
+      for (let date = 1; date <= lastDay.getDate(); date++) {
+        const d = new Date(year, month, date);
+        // Use local date string for comparison
+  const yyyy_mm_dd = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  const isTask = taskDates.includes(yyyy_mm_dd);
+  html += `<td style="padding:6px;${isTask ? 'background:#2f8f6a;color:white;border-radius:50%;font-weight:bold;' : ''}">${date}</td>`;
+        if ((dayOfWeek + date) % 7 === 0) html += '</tr><tr>';
+      }
+      html += '</tr></tbody></table>';
+      container.innerHTML = html;
+    }
+
+    // On DOMContentLoaded, render calendar with tasks
+    // Helper to get all current task dates from DOM
+    function getCurrentTaskDatesFromDOM() {
+      const rows = document.querySelectorAll('.task-row');
+      const dates = [];
+      rows.forEach(row => {
+        const dateText = row.querySelector('.muted.small')?.textContent?.split('·')[0]?.trim();
+        if (dateText) dates.push(dateText);
+      });
+      return dates.map(d => ({date: d}));
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      // Parse tasks from server-rendered HTML
+      const tasks = [];
+      {% if tasks %}
+        {% for t in tasks %}
+          tasks.push({date: '{{ t.date }}'});
+        {% endfor %}
+      {% endif %}
+      renderCalendar(tasks);
+
+      // Patch delete button handler to update calendar after delete
+      document.querySelectorAll('.delete-task-btn').forEach(function(btn) {
+        btn.addEventListener('click', async function(e) {
+          e.preventDefault();
+          const taskId = this.getAttribute('data-task-id');
+          if (!confirm('Delete this task?')) return;
+          // Remove the task row from DOM immediately
+          const row = this.closest('.task-row');
+          if (row) row.remove();
+          // If no tasks left, show 'No tasks'
+          if (document.querySelectorAll('.task-row').length === 0) {
+            document.getElementById('taskList').innerHTML = '<div class="muted">No tasks</div>';
+          }
+          // Update calendar immediately
+          renderCalendar(getCurrentTaskDatesFromDOM());
+          // Now make the API call
+          const res = await fetch('/api/delete_task', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ task_id: taskId })
+          });
+          const data = await res.json();
+          if (!data.success) {
+            alert(data.error || 'Failed to delete task');
+            // Optionally, you could re-fetch tasks here if needed
+          }
+        });
+      });
+
+      // Patch add task form to update calendar after add
+      const addTaskForm = document.getElementById('addTaskForm');
+      if (addTaskForm) {
+        addTaskForm.addEventListener('submit', function(e) {
+          setTimeout(() => {
+            renderCalendar(getCurrentTaskDatesFromDOM());
+          }, 500); // Wait for DOM update
+        });
+      }
+    });
+  </script>
+            </div>
+
+            <div class="card" style="padding:12px;margin-top:12px">
+              <h4 style="margin:0 0 8px 0">Add Task</h4>
+              <form action="/add_task" method="post" id="addTaskForm">
+                <label>Title</label>
+                <input name="taskTitle" id="taskTitle" required />
+                <label>Date</label>
+                <input name="taskDate" id="taskDate" type="date" required />
+                <label>Notes</label>
+                <textarea name="taskNotes" id="taskNotes" rows="3"></textarea>
+                <div style="display:flex;gap:8px;margin-top:8px">
+                  <button type="submit" class="btn">Save Task</button>
+                  <button type="button" id="cancelTask" class="small">Cancel</button>
+                </div>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div style="height:16px"></div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Expense Log</h3>
+        <div style="display:flex;gap:8px">
+          <input id="expItem" placeholder="Item/Reason" />
+          <input id="expAmount" placeholder="Amount" type="number" />
+          <select id="expSeason"><option value="kharif">Kharif</option><option value="rabi">Rabi</option><option value="zaid">Zaid</option></select>
+          <button id="addExpense" class="btn">Add</button>
+        </div>
+        <div style="margin-top:12px">
+          <table id="expTable"><thead><tr><th>Item</th><th>Amount</th><th>Season</th><th></th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <footer>
+    Prototype — data stored in local browser storage. Replace hooks with backend integrations for production.
+  </footer>
+
+  <script>
+    // --- Simple persistence & state ---
+    const LS_KEY = 'farm_manager_v1';
+    let state = { profile:null, tasks:[], inventory:[], expenses:[] };
+
+    function saveState(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); renderAll(); }
+    function loadState(){ const s = localStorage.getItem(LS_KEY); if(s) state = JSON.parse(s); }
+
+    // --- Render functions ---
+    function renderAll(){ renderProfile(); renderInv(); renderTasks(); renderExpenses(); renderReport(); }
+
+    function renderProfile(){ document.getElementById('farmName').innerText = state.profile?.name || '—'; document.getElementById('farmMeta').innerText = state.profile?.meta || 'Set up your farm profile'; document.getElementById('currentFarmName').innerText = state.profile?.name ? state.profile.name : 'Not signed in'; }
+
+    function renderInv(){ const el = document.getElementById('invList'); el.innerHTML=''; if(state.inventory.length===0) el.innerHTML='<div class="muted small">No inventory</div>';
+      state.inventory.forEach((it, idx)=>{
+        const row = document.createElement('div');
+        row.style.display='flex';
+        row.style.justifyContent='space-between';
+        row.style.marginTop='6px';
+        row.innerHTML = `<div>${it.name} <span class="muted" style="font-size:12px">x${it.qty}</span></div><div><button class="small" data-idx="${idx}" onclick="editInv(${idx})">✎</button> <button class="small" onclick="removeInv(${idx})">🗑</button></div>`;
+        el.appendChild(row);
+      })
+    }
+
+
+
+  // No JS fetch for tasks needed; tasks are rendered server-side
+
+    function renderExpenses(){ const tb = document.querySelector('#expTable tbody'); tb.innerHTML=''; if(state.expenses.length===0){ tb.innerHTML='<tr><td colspan="4" class="muted">No expenses</td></tr>'; return }
+      state.expenses.forEach((e,idx)=>{ const tr = document.createElement('tr'); tr.innerHTML = <td>${e.item}</td><td>${e.amount}</td><td>${e.season}</td><td><button class="small" onclick="removeExpense(${idx})">Del</button></td>; tb.appendChild(tr); }) }
+
+    function renderReport(){ const area = document.getElementById('reportArea'); const total = state.expenses.reduce((s,e)=>s+Number(e.amount),0); const bySeason = state.expenses.reduce((acc,e)=>{ acc[e.season]= (acc[e.season]||0)+Number(e.amount); return acc },{}); area.innerHTML = <div class="small">Total spent: ₹${total}</div><div class="muted small">${Object.entries(bySeason).map(([k,v])=>k+': ₹'+v).join(' · ')}</div> }
+
+    // --- Inventory actions ---
+    function addInv(){ const name = document.getElementById('invName').value.trim(); const qty = document.getElementById('invQty').value || 1; if(!name) return alert('Enter item name'); state.inventory.push({name,qty}); document.getElementById('invName').value=''; document.getElementById('invQty').value=''; saveState(); }
+    function editInv(idx){ const it = state.inventory[idx]; const newName = prompt('Item name', it.name); if(newName===null) return; const newQty = prompt('Qty', it.qty); if(newQty===null) return; state.inventory[idx] = {name:newName, qty:newQty}; saveState(); }
+    function removeInv(idx){ if(!confirm('Remove item?')) return; state.inventory.splice(idx,1); saveState(); }
+
+    // --- Task actions ---
+    function addQuickTask(){
+      const title = document.getElementById('quickTaskTitle').value.trim();
+      const date = document.getElementById('quickTaskDate').value;
+      if(!title||!date) return alert('Title and date required');
+      fetch('/add_task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ taskTitle: title, taskDate: date, taskNotes: '' })
+      }).then(res => {
+        if (!res.ok) throw new Error('Failed to add task');
+        return res.json();
+      }).then(data => {
+        fetchAndRenderTasks();
+      }).catch(() => {
+        alert('Failed to add task');
+      });
+      document.getElementById('quickTaskTitle').value='';
+      document.getElementById('quickTaskDate').value='';
+    }
+    function toggleDone(idx){ state.tasks[idx].status = state.tasks[idx].status==='done' ? 'pending' : 'done'; saveState(); }
+    function deleteTask(idx){ if(!confirm('Delete task?')) return; state.tasks.splice(idx,1); saveState(); }
+
+    // --- Expenses ---
+    function addExpense(){ const item = document.getElementById('expItem').value.trim(); const amount = Number(document.getElementById('expAmount').value); const season = document.getElementById('expSeason').value; if(!item||!amount) return alert('Enter item and positive amount'); state.expenses.push({item,amount,season}); document.getElementById('expItem').value=''; document.getElementById('expAmount').value=''; saveState(); }
+    function removeExpense(idx){ state.expenses.splice(idx,1); saveState(); }
+
+    // --- Save / Load ---
+    document.getElementById('addInv').addEventListener('click', addInv);
+    document.getElementById('addQuickTask').addEventListener('click', addQuickTask);
+    // Intercept addTaskForm submit to send to backend and refresh tasks
+    document.getElementById('addTaskForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const title = document.getElementById('taskTitle').value.trim();
+      const date = document.getElementById('taskDate').value;
+      const notes = document.getElementById('taskNotes').value;
+      if(!title||!date) return alert('Title and date required');
+      fetch('/add_task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ taskTitle: title, taskDate: date, taskNotes: notes })
+      }).then(res => {
+        if (!res.ok) throw new Error('Failed to add task');
+        return res.json();
+      }).then(data => {
+        fetchAndRenderTasks();
+        document.getElementById('taskTitle').value='';
+        document.getElementById('taskDate').value='';
+        document.getElementById('taskNotes').value='';
+      }).catch(() => {
+        alert('Failed to add task');
+      });
+    });
+    document.getElementById('cancelTask').addEventListener('click', ()=>{ document.getElementById('taskTitle').value=''; document.getElementById('taskDate').value=''; document.getElementById('taskNotes').value=''; });
+    document.getElementById('openTaskForm').addEventListener('click', ()=>{ document.getElementById('taskTitle').focus(); });
+    document.getElementById('filterStatus').addEventListener('change', renderTasks);
+    document.getElementById('addExpense').addEventListener('click', addExpense);
+
+    // --- Profile/Login ---
+    document.getElementById('openLogin').addEventListener('click', ()=>{
+      const name = prompt('Farm name / username'); if(!name) return; const meta = prompt('Optional: location or short meta'); state.profile = {name,meta}; saveState();
+    });
+
+    // --- Reminders (simulation) ---
+    document.getElementById('sendReminder').addEventListener('click', ()=>{
+      const pending = state.tasks.filter(t=>t.status==='pending'); if(!pending.length) return alert('No pending tasks to remind');
+      // This is where you'd call a backend endpoint that triggers Twilio / SendGrid etc.
+      // For prototype we show an alert and log to console.
+      alert('Reminders simulated: ' + pending.length + ' pending tasks — check console for details.');
+      console.log('Simulated reminders payload:', {to: state.profile?.name || 'farmer@example.com', tasks: pending});
+    });
+
+    // --- Clear data ---
+    document.getElementById('clearData').addEventListener('click', ()=>{ if(!confirm('Clear all saved data?')) return; state={profile:null,tasks:[],inventory:[],expenses:[]}; saveState(); localStorage.removeItem(LS_KEY); renderAll(); })
+
+    // export
+    document.getElementById('exportReport').addEventListener('click', ()=>{
+      const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='farm_data.json'; a.click(); URL.revokeObjectURL(url);
+    });
+
+
+
+  // initialization
+  loadState();
+
+    // Expose some functions for inline onclick handlers
+    window.editInv = editInv; window.removeInv = removeInv; window.toggleDone = toggleDone; window.deleteTask = deleteTask; window.removeExpense = removeExpense;
+
+  </script>
+</body>
+</html>
