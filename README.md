@@ -442,4 +442,4 @@ For issues or questions:
 
 ---
 
-**Made with ❤️ for farmers by Akhilesh K**
+**Made with ❤️ for farmers by Team ELITE4 Avishkaar**
