@@ -1,6 +1,5 @@
 
-
-
+import openai
 from flask import jsonify, send_file
 import smtplib
 import json
@@ -10,6 +9,7 @@ from datetime import datetime, date
 import requests
 from collections import defaultdict, Counter
 from statistics import mean
+from twilio.rest import Client
 import numpy as np
 import pickle
 import openai
@@ -24,29 +24,45 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 from io import BytesIO
 import json
+import os
+from dotenv import load_dotenv
 
-from app import app
-from app.models import User, Task, Inventory, Expense, Journal
+# Load environment variables
+load_dotenv()
+
+from app import app, db
+from app.models import User, Task, Inventory, Expense, Journal, Product, VerifiedSeller, Payment
 
 from flask import render_template, request, redirect, url_for, flash, session
 
 # Email configuration
 SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-SENDER_EMAIL = "iamakhilyt2005@gmail.com"
-SENDER_PASSWORD = "fwwnckpgduuknunh"
-RECEIVER_EMAIL = "akhilesh112606@gmail.com"
+# Email configuration from environment variables
+SMTP_SERVER = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+SMTP_PORT = int(os.getenv('SMTP_PORT', 587))
+SENDER_EMAIL = os.getenv('SENDER_EMAIL')
+SENDER_PASSWORD = os.getenv('SENDER_PASSWORD')
+RECEIVER_EMAIL = os.getenv('RECEIVER_EMAIL')
 
-# OpenAI configuration
-OPENAI_API_KEY = "AIzaSyDDwBz6W4X5ZN-DovooMfVRJTsMFOy0c3A"
+# Twilio configuration from environment variables
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+
+# Initialize Twilio client
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN) if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else None
+
+# OpenAI configuration from environment variables
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 # Initialize OpenAI client
 from openai import OpenAI
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
-# Google Gemini AI configuration
-GEMINI_API_KEY = "AIzaSyDDwBz6W4X5ZN-DovooMfVRJTsMFOy0c3A"
-genai.configure(api_key=GEMINI_API_KEY)
+# Google Gemini AI configuration from environment variables
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # Initialize Gemini model
 gemini_model = genai.GenerativeModel("gemini-1.5-flash")
@@ -65,6 +81,72 @@ def hash_password(password):
     password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
     # Return salt and hash combined
     return f"{salt}${password_hash}"
+
+import openai
+
+# OpenAI API key already configured above
+if OPENAI_API_KEY:
+    openai.api_key = OPENAI_API_KEY
+
+# Chatbot API route
+@app.route("/api/climate_smart_chat", methods=["POST"])
+def climate_smart_chat():
+    try:
+        import requests
+        data = request.get_json()
+        user_message = data.get("message", "")
+        region = data.get("region", "Andhra Pradesh")
+        # Fetch weather data for the region (use Bhimavaram as default)
+        lat = data.get("lat", "16.5449")
+        lon = data.get("lon", "81.5212")
+        weather_api_key = "a1b2394289828346d954d42d376a1033"
+        weather_url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={weather_api_key}&units=metric"
+        weather_data = None
+        try:
+            weather_resp = requests.get(weather_url, timeout=5)
+            if weather_resp.status_code == 200:
+                weather_data = weather_resp.json()
+        except Exception as e:
+            weather_data = None
+        # Format weather context
+        if weather_data:
+            weather_context = (
+                f"Weather for {region}: "
+                f"{weather_data['weather'][0]['description'].capitalize()}, "
+                f"Temperature: {weather_data['main']['temp']}°C, "
+                f"Humidity: {weather_data['main']['humidity']}%, "
+                f"Rainfall: {weather_data.get('rain', {}).get('1h', 0)}mm (last hour)"
+            )
+        else:
+            weather_context = "Weather: 32°C, 80% humidity, 200mm rainfall (default)"
+        # ML prediction for this weather
+        temperature = weather_data['main']['temp'] if weather_data else 32
+        humidity = weather_data['main']['humidity'] if weather_data else 80
+        rainfall = weather_data.get('rain', {}).get('1h', 0) if weather_data else 200
+        predictions = predict_crops_mock(temperature, humidity, rainfall)
+        crops_context = "Best crops (ML prediction): " + ", ".join([f"{c[0]} ({c[1]*100:.1f}%)" for c in predictions])
+        # Compose RAG-style context
+        context = (
+            f"You are a climate-smart crop planning assistant for Indian farmers.\n"
+            f"Current region: {region}.\n"
+            f"{weather_context}.\n"
+            f"{crops_context}.\n"
+            "Use the above weather and crop prediction data to answer user questions about crop planning, risk, profit, and calendars. Be concise and helpful."
+        )
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": context},
+                {"role": "user", "content": user_message}
+            ],
+            max_tokens=256,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content.strip()
+        return jsonify({"success": True, "reply": reply})
+    except Exception as e:
+        print(f"[OpenAI Chatbot Error] {e}")
+        return jsonify({"success": False, "reply": "Sorry, the assistant is currently unavailable."})
 
 def verify_password(password, stored_hash):
     """Verify a password against a stored hash"""
@@ -289,6 +371,75 @@ def generate_seasonal_report_pdf(report_data):
     doc.build(story)
     buffer.seek(0)
     return buffer
+
+# API route to generate dynamic risk bands for crops using OpenAI
+@app.route("/api/crop_risk_bands", methods=["POST"])
+def api_crop_risk_bands():
+    try:
+        data = request.get_json()
+        region = data.get("region", "Andhra Pradesh")
+        # Optionally, allow weather/crop context from frontend
+        weather = data.get("weather", "32°C, 80% humidity, 200mm rainfall")
+        crops = data.get("crops", "Rice, Cotton, Pulses, Wheat, Maize")
+        include_prices = data.get("include_prices", False)
+        # Compose prompt for OpenAI
+        prompt = (
+            f"You are an expert agricultural risk analyst for Indian farming. "
+            f"Given the region: {region}, weather: {weather}, and these crops: {crops}, "
+            "categorize each crop into one of three risk bands: Low Risk, Medium Risk, or High Risk. "
+            "Consider climate, disease, market, and yield risks. "
+            "Return a JSON object with three arrays: 'low', 'medium', 'high', each listing crop names. "
+            "Example: { 'low': ['Rice', 'Wheat'], 'medium': ['Cotton'], 'high': ['Pulses'] }"
+        )
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert agricultural risk analyst. Always respond with valid JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=256,
+            temperature=0.3
+        )
+        import json
+        content = response.choices[0].message.content.strip()
+        # Clean up if wrapped in code block
+        if content.startswith('```json'):
+            content = content.replace('```json', '').replace('```', '').strip()
+        risk_bands = json.loads(content)
+
+        # Static/mock price map per crop (could be region-specific)
+        price_map = {
+            'Rice': 1850,
+            'Wheat': 2200,
+            'Cotton': 5500,
+            'Sugarcane': 350,
+            'Maize': 1950,
+            'Pulses': 3800,
+            'Mustard': 4200,
+            'Barley': 1600
+        }
+        # Optionally, region-specific price adjustment (mock)
+        if region == 'Punjab':
+            price_map['Wheat'] = 2300
+            price_map['Rice'] = 1900
+        elif region == 'Maharashtra':
+            price_map['Cotton'] = 5700
+        # ...add more region logic as needed
+
+        # Collect all crops in risk bands
+        all_crops = set()
+        for band in ['low', 'medium', 'high']:
+            for crop in risk_bands.get(band, []):
+                all_crops.add(crop)
+        prices = {crop: price_map.get(crop, None) for crop in all_crops}
+
+        response_json = {"success": True, "risk_bands": risk_bands}
+        if include_prices:
+            response_json["prices"] = prices
+        return jsonify(response_json)
+    except Exception as e:
+        print(f"[OpenAI Risk Bands Error] {e}")
+        return jsonify({"success": False, "risk_bands": {"low": [], "medium": [], "high": []}})
 
 def generate_crop_recommendations_pdf(recommendations_data, market_data=None):
     """Generate a PDF report for crop recommendations and market insights"""
@@ -559,24 +710,22 @@ def get_fallback_market_data(top_crops):
                 "market_tip": f"Consider {crop_name.lower()} cultivation based on current market conditions"
             })
     
-    return {
-        "success": True,
-        "data": {
-            "crops": crops_data,
-            "general_tip": "Market conditions are favorable for diversified crop production. Monitor price trends regularly."
-        }
-    }
-
-def generate_farming_alerts(journal_entries):
-    """Generate AI-powered alerts and reminders based on farming journal entries using OpenAI"""
-    alerts = []
-    today = date.today()
-    
-    print(f"\n🚨 GENERATING AI-POWERED FARMING ALERTS")
-    print(f"Processing {len(journal_entries)} journal entries with OpenAI")
-    
     try:
-        # Prepare journal data for OpenAI analysis
+        # Call OpenAI Chat Completion API (gpt-3.5-turbo) using openai>=1.0.0 interface
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are an expert agricultural market analyst with deep knowledge of Indian crop markets, pricing trends, and farming economics."},
+                {"role": "user", "content": f"Provide a market summary for these crops: {', '.join([crop[0] for crop in crops_data])}."}
+            ],
+            max_tokens=256,
+            temperature=0.7
+        )
+        reply = response.choices[0].message.content.strip()
+        return jsonify({"success": True, "reply": reply})
+    except Exception as e:
+        print(f"[OpenAI Chatbot Error] {e}")
+        return jsonify({"success": False, "reply": "Sorry, the assistant is currently unavailable."})
         journal_summary = []
         activity_counts = {}
         
@@ -955,6 +1104,623 @@ def home():
 
 # Route to render the login page
 
+@app.route("/marketplace")
+def marketplace_page():
+    if "user_id" not in session:
+        flash("Please log in to access the marketplace.", "warning")
+        return redirect(url_for("login"))
+    
+    user = User.query.get(session["user_id"])
+    return render_template("marketplace.html", username=user.username if user else "Guest")
+
+# API route to get all products for marketplace (excluding user's own products)
+@app.route("/api/products", methods=["GET"])
+def api_get_products():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Get all active products except those posted by the current user
+    products = Product.query.filter(
+        Product.status == 'active',
+        Product.user_id != session["user_id"]
+    ).all()
+    
+    products_list = [{
+        "id": p.id,
+        "name": p.product_name,
+        "category": p.category,
+        "price": p.price,
+        "quantity": p.quantity,
+        "unit": p.unit,
+        "description": p.description or "",
+        "location": p.location or "",
+        "contact": p.contact or "",
+        "datePosted": p.date_posted,
+        "seller": p.user.username,
+        "status": p.status
+    } for p in products]
+    
+    return jsonify(products_list)
+
+# API route to get user's own products
+@app.route("/api/my_products", methods=["GET"])
+def api_get_my_products():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    products = Product.query.filter_by(user_id=session["user_id"]).all()
+    
+    products_list = [{
+        "id": p.id,
+        "name": p.product_name,
+        "category": p.category,
+        "price": p.price,
+        "quantity": p.quantity,
+        "unit": p.unit,
+        "description": p.description or "",
+        "location": p.location or "",
+        "contact": p.contact or "",
+        "datePosted": p.date_posted,
+        "seller": p.user.username,
+        "status": p.status
+    } for p in products]
+    
+    return jsonify(products_list)
+
+# API route to check seller verification status
+@app.route("/api/check_verification", methods=["GET"])
+def api_check_verification():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    verification = VerifiedSeller.query.filter_by(user_id=user.id).first()
+    
+    if not verification:
+        # Create if doesn't exist
+        verification = VerifiedSeller(username=user.username, user_id=user.id)
+        db.session.add(verification)
+        db.session.commit()
+    
+    return jsonify({
+        "verified": verification.verified_farming_seller,
+        "status": verification.verification_status,
+        "rejection_reason": verification.rejection_reason
+    })
+
+# API route to submit verification request
+@app.route("/api/submit_verification", methods=["POST"])
+def api_submit_verification():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    data = request.json
+    
+    verification = VerifiedSeller.query.filter_by(user_id=user.id).first()
+    if not verification:
+        verification = VerifiedSeller(username=user.username, user_id=user.id)
+        db.session.add(verification)
+    
+    # Update verification details
+    verification.farm_name = data.get("farm_name")
+    verification.farm_location = data.get("farm_location")
+    verification.farm_size = data.get("farm_size")
+    verification.farming_experience = data.get("farming_experience")
+    verification.crops_grown = data.get("crops_grown")
+    verification.phone_number = data.get("phone_number")
+    verification.id_proof_number = data.get("id_proof_number")
+    verification.verification_status = "pending"
+    
+    try:
+        db.session.commit()
+        return jsonify({"success": True, "message": "Verification request submitted successfully!"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": "Failed to submit verification request"}), 500
+
+# API route to add a new product
+@app.route("/api/add_product", methods=["POST"])
+def api_add_product():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Check if user is verified
+    user = User.query.get(session["user_id"])
+    verification = VerifiedSeller.query.filter_by(user_id=user.id).first()
+    
+    if not verification or not verification.verified_farming_seller:
+        return jsonify({"error": "Seller verification required", "verification_required": True}), 403
+    
+    data = request.json
+    
+    if not data.get("name") or not data.get("price") or not data.get("quantity"):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    new_product = Product(
+        product_name=data["name"],
+        category=data["category"],
+        price=float(data["price"]),
+        quantity=data["quantity"],
+        unit=data["unit"],
+        description=data.get("description", ""),
+        location=data.get("location", ""),
+        contact=data.get("contact", ""),
+        date_posted=datetime.now().strftime("%m/%d/%Y"),
+        status="pending",
+        user_id=session["user_id"]
+    )
+    
+    db.session.add(new_product)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "product": {
+            "id": new_product.id,
+            "name": new_product.product_name,
+            "category": new_product.category,
+            "price": new_product.price,
+            "quantity": new_product.quantity,
+            "unit": new_product.unit,
+            "description": new_product.description,
+            "location": new_product.location,
+            "contact": new_product.contact,
+            "datePosted": new_product.date_posted,
+            "status": new_product.status
+        }
+    })
+
+# API route to get orders for a specific product
+@app.route("/api/product_orders/<int:product_id>", methods=["GET"])
+def api_get_product_orders(product_id):
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Verify the product belongs to the logged-in user
+    product = Product.query.filter_by(id=product_id, user_id=session["user_id"]).first()
+    if not product:
+        return jsonify({"error": "Product not found or unauthorized"}), 404
+    
+    # Get all verified payments and check if they contain this product
+    all_payments = Payment.query.filter_by(payment_status='verified').all()
+    product_orders = []
+    
+    for payment in all_payments:
+        try:
+            order_items = json.loads(payment.order_items)
+            # Check if this product is in the order
+            for item in order_items:
+                if item.get('name') == product.product_name:
+                    product_orders.append({
+                        "order_id": payment.order_id,
+                        "customer_name": payment.full_name,
+                        "customer_phone": payment.phone_number,
+                        "delivery_address": f"{payment.address_line1}, {payment.city}, {payment.state} - {payment.pincode}",
+                        "quantity_ordered": item.get('cartQuantity', item.get('quantity', 1)),
+                        "total_price": float(item.get('price', 0)) * item.get('cartQuantity', item.get('quantity', 1)),
+                        "order_date": payment.payment_date,
+                        "verified_date": payment.verified_date
+                    })
+                    break
+        except:
+            continue
+    
+    return jsonify({
+        "product_name": product.product_name,
+        "orders": product_orders,
+        "total_orders": len(product_orders)
+    })
+
+# API route to delete a product
+@app.route("/api/delete_product", methods=["POST"])
+def api_delete_product():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    data = request.json
+    product_id = data.get("id")
+    
+    product = Product.query.filter_by(id=product_id, user_id=session["user_id"]).first()
+    
+    if not product:
+        return jsonify({"error": "Product not found or unauthorized"}), 404
+    
+    db.session.delete(product)
+    db.session.commit()
+    
+    return jsonify({"success": True})
+
+# Admin routes
+@app.route("/admin")
+def admin_page():
+    # Check if user is logged in
+    if "user_id" not in session:
+        flash("Please log in to access this page.", "warning")
+        return redirect(url_for("login"))
+    
+    # Check if user has admin role
+    user = User.query.get(session["user_id"])
+    if not user or user.role != "admin":
+        flash("Access denied. Admin privileges required.", "danger")
+        return redirect(url_for("dashboard"))
+    
+    return render_template("admin.html", admin_name=user.username)
+
+# API route to get all products for admin
+@app.route("/api/admin/products", methods=["GET"])
+def api_admin_get_products():
+    # Check if user is logged in and has admin role
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user or user.role != "admin":
+        return jsonify({"error": "Access denied. Admin privileges required."}), 403
+    
+    products = Product.query.all()
+    
+    products_list = [{
+        "id": p.id,
+        "name": p.product_name,
+        "category": p.category,
+        "price": p.price,
+        "quantity": p.quantity,
+        "unit": p.unit,
+        "description": p.description or "",
+        "location": p.location or "",
+        "contact": p.contact or "",
+        "datePosted": p.date_posted,
+        "seller": p.user.username,
+        "status": p.status
+    } for p in products]
+    
+    return jsonify(products_list)
+
+# API route to approve a product
+@app.route("/api/admin/approve_product", methods=["POST"])
+def api_admin_approve_product():
+    # Check if user is logged in and has admin role
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user or user.role != "admin":
+        return jsonify({"error": "Access denied. Admin privileges required."}), 403
+    
+    data = request.json
+    product_id = data.get("id")
+    
+    product = Product.query.get(product_id)
+    
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    try:
+        product.status = "active"
+        db.session.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error approving product: {e}")
+        return jsonify({"error": "Database error. Please try again."}), 500
+
+# API route to reject a product
+@app.route("/api/admin/reject_product", methods=["POST"])
+def api_admin_reject_product():
+    # Check if user is logged in and has admin role
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if not user or user.role != "admin":
+        return jsonify({"error": "Access denied. Admin privileges required."}), 403
+    
+    data = request.json
+    product_id = data.get("id")
+    
+    product = Product.query.get(product_id)
+    
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+    
+    try:
+        product.status = "rejected"
+        db.session.commit()
+        return jsonify({"success": True})
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error rejecting product: {e}")
+        return jsonify({"error": "Database error. Please try again."}), 500
+
+# API route to get all verification requests for admin
+@app.route("/api/admin/verification_requests", methods=["GET"])
+def api_admin_verification_requests():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if user.role != "admin":
+        return jsonify({"error": "Forbidden - Admin access required"}), 403
+    
+    verifications = VerifiedSeller.query.all()
+    return jsonify([{
+        "id": v.id,
+        "username": v.username,
+        "verified": v.verified_farming_seller,
+        "status": v.verification_status,
+        "farm_name": v.farm_name,
+        "farm_location": v.farm_location,
+        "farm_size": v.farm_size,
+        "farming_experience": v.farming_experience,
+        "crops_grown": v.crops_grown,
+        "phone_number": v.phone_number,
+        "id_proof_number": v.id_proof_number,
+        "rejection_reason": v.rejection_reason,
+        "verified_date": v.verified_date
+    } for v in verifications])
+
+# API route to approve seller verification
+@app.route("/api/admin/approve_verification", methods=["POST"])
+def api_admin_approve_verification():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if user.role != "admin":
+        return jsonify({"error": "Forbidden - Admin access required"}), 403
+    
+    data = request.json
+    verification_id = data.get("verification_id")
+    
+    verification = VerifiedSeller.query.get(verification_id)
+    if not verification:
+        return jsonify({"error": "Verification request not found"}), 404
+    
+    verification.verified_farming_seller = True
+    verification.verification_status = "approved"
+    verification.verified_date = date.today().strftime("%Y-%m-%d")
+    verification.rejection_reason = None
+    
+    try:
+        db.session.commit()
+        return jsonify({"success": True, "message": "Seller verified successfully"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": "Failed to approve verification"}), 500
+
+# API route to reject seller verification
+@app.route("/api/admin/reject_verification", methods=["POST"])
+def api_admin_reject_verification():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if user.role != "admin":
+        return jsonify({"error": "Forbidden - Admin access required"}), 403
+    
+    data = request.json
+    verification_id = data.get("verification_id")
+    reason = data.get("reason", "Verification requirements not met")
+    
+    verification = VerifiedSeller.query.get(verification_id)
+    if not verification:
+        return jsonify({"error": "Verification request not found"}), 404
+    
+    verification.verified_farming_seller = False
+    verification.verification_status = "rejected"
+    verification.rejection_reason = reason
+    
+    try:
+        db.session.commit()
+        return jsonify({"success": True, "message": "Verification rejected"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": "Failed to reject verification"}), 500
+
+# API route to submit payment with address and screenshot
+@app.route("/api/submit_payment", methods=["POST"])
+def api_submit_payment():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    data = request.json
+    
+    # Generate unique order ID
+    import secrets
+    order_id = f"ORD{secrets.token_hex(8).upper()}"
+    
+    # Create payment record
+    payment = Payment(
+        order_id=order_id,
+        order_items=data.get("order_items"),
+        total_amount=float(data.get("total_amount")),
+        full_name=data.get("full_name"),
+        phone_number=data.get("phone_number"),
+        address_line1=data.get("address_line1"),
+        address_line2=data.get("address_line2"),
+        city=data.get("city"),
+        state=data.get("state"),
+        pincode=data.get("pincode"),
+        payment_screenshot=data.get("payment_screenshot"),
+        payment_date=date.today().strftime("%Y-%m-%d"),
+        user_id=user.id
+    )
+    
+    try:
+        db.session.add(payment)
+        db.session.commit()
+        return jsonify({
+            "success": True, 
+            "message": "Payment submitted successfully!",
+            "order_id": order_id
+        })
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error submitting payment: {e}")
+        return jsonify({"error": "Failed to submit payment"}), 500
+
+# API route to get user's payment history
+@app.route("/api/my_payments", methods=["GET"])
+def api_my_payments():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    payments = Payment.query.filter_by(user_id=user.id).order_by(Payment.id.desc()).all()
+    
+    return jsonify([{
+        "id": p.id,
+        "order_id": p.order_id,
+        "order_items": p.order_items,
+        "total_amount": p.total_amount,
+        "payment_date": p.payment_date,
+        "payment_status": p.payment_status,
+        "admin_notes": p.admin_notes,
+        "verified_date": p.verified_date,
+        "full_name": p.full_name,
+        "phone_number": p.phone_number,
+        "address_line1": p.address_line1,
+        "address_line2": p.address_line2,
+        "city": p.city,
+        "state": p.state,
+        "pincode": p.pincode
+    } for p in payments])
+
+@app.route("/api/admin/payments", methods=["GET"])
+def api_admin_payments():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if user.role != 'admin':
+        return jsonify({"error": "Forbidden - Admin only"}), 403
+    
+    payments = Payment.query.order_by(Payment.id.desc()).all()
+    
+    return jsonify([{
+        "id": p.id,
+        "order_id": p.order_id,
+        "order_items": p.order_items,
+        "total_amount": p.total_amount,
+        "full_name": p.full_name,
+        "phone_number": p.phone_number,
+        "address_line1": p.address_line1,
+        "address_line2": p.address_line2,
+        "city": p.city,
+        "state": p.state,
+        "pincode": p.pincode,
+        "payment_screenshot": p.payment_screenshot,
+        "payment_date": p.payment_date if isinstance(p.payment_date, str) else p.payment_date.isoformat(),
+        "payment_status": p.payment_status,
+        "admin_notes": p.admin_notes,
+        "verified_date": p.verified_date if isinstance(p.verified_date, str) else (p.verified_date.isoformat() if p.verified_date else None),
+        "user_id": p.user_id
+    } for p in payments])
+
+@app.route("/api/admin/verify_payment", methods=["POST"])
+def api_admin_verify_payment():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if user.role != 'admin':
+        return jsonify({"error": "Forbidden - Admin only"}), 403
+    
+    data = request.json
+    order_id = data.get("order_id")
+    
+    try:
+        payment = Payment.query.filter_by(order_id=order_id).first()
+        if not payment:
+            return jsonify({"error": "Payment not found"}), 404
+        
+        payment.payment_status = 'verified'
+        payment.verified_date = date.today()
+        payment.admin_notes = 'Payment verified by admin'
+        
+        db.session.commit()
+        
+        # Send SMS notifications to sellers
+        try:
+            order_items = json.loads(payment.order_items)
+            sellers_notified = set()
+            
+            for item in order_items:
+                seller_username = item.get('seller')
+                if seller_username and seller_username not in sellers_notified:
+                    # Get seller's phone number from VerifiedSeller table
+                    verified_seller = VerifiedSeller.query.filter_by(username=seller_username).first()
+                    
+                    if verified_seller and verified_seller.phone_number:
+                        # Prepare SMS message
+                        sms_message = f"""🎉 New Order Received!
+
+Order ID: {payment.order_id}
+Customer: {payment.full_name}
+Phone: {payment.phone_number}
+Delivery Address: {payment.address_line1}, {payment.city}, {payment.state} - {payment.pincode}
+Total Amount: ₹{payment.total_amount:.2f}
+
+Please contact the customer to arrange delivery.
+
+- Farm Marketplace"""
+                        
+                        # Send SMS via Twilio
+                        phone = verified_seller.phone_number
+                        # Format phone number for international format if needed
+                        if not phone.startswith('+'):
+                            phone = f"+91{phone}"  # Assuming Indian numbers
+                        
+                        message = twilio_client.messages.create(
+                            body=sms_message,
+                            from_=TWILIO_PHONE_NUMBER,
+                            to=phone
+                        )
+                        
+                        sellers_notified.add(seller_username)
+                        print(f"✅ SMS sent to {seller_username} at {phone}: {message.sid}")
+            
+            if sellers_notified:
+                print(f"📱 Total sellers notified via SMS: {len(sellers_notified)}")
+        except Exception as sms_error:
+            print(f"⚠️ SMS notification error: {sms_error}")
+            # Don't fail the payment verification if SMS fails
+        
+        return jsonify({"message": "Payment verified successfully"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/reject_payment", methods=["POST"])
+def api_admin_reject_payment():
+    if "user_id" not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = User.query.get(session["user_id"])
+    if user.role != 'admin':
+        return jsonify({"error": "Forbidden - Admin only"}), 403
+    
+    data = request.json
+    order_id = data.get("order_id")
+    reason = data.get("reason", "Payment rejected by admin")
+    
+    try:
+        payment = Payment.query.filter_by(order_id=order_id).first()
+        if not payment:
+            return jsonify({"error": "Payment not found"}), 404
+        
+        payment.payment_status = 'rejected'
+        payment.verified_date = date.today()
+        payment.admin_notes = reason
+        
+        db.session.commit()
+        return jsonify({"message": "Payment rejected"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
 # Dashboard route
 @app.route("/dashboard")
 def dashboard():
@@ -1260,6 +2026,14 @@ def register():
     user = User(username=username, password=hashed_password)
     from app import db
     db.session.add(user)
+    db.session.commit()
+    
+    # Auto-create VerifiedSeller entry for new user
+    verified_seller = VerifiedSeller(
+        username=username,
+        user_id=user.id
+    )
+    db.session.add(verified_seller)
     db.session.commit()
     
     print(f"✅ New user '{username}' registered with hashed password")
@@ -2225,6 +2999,200 @@ def get_fallback_calendar_data(top_crops, month):
         "month_name": month_names[month - 1],
         "activities": activities
     }
+
+
+# API route to generate a dynamic crop calendar using OpenAI
+@app.route("/api/crop_calendar", methods=["POST"])
+def api_crop_calendar():
+    """Generate a crop calendar based on crop type, season, and weather using OpenAI."""
+    try:
+        data = request.get_json()
+        region = data.get("region", "India")
+        crops = data.get("crops", "Rice, Wheat, Maize")
+        weather = data.get("weather", "Temperature: 30°C, Rainfall: 150mm, Humidity: 80%")
+        month = data.get("month")
+        
+        # Get current month if not provided
+        current_month = datetime.now().month
+        current_month_name = datetime.now().strftime("%B")
+        current_year = datetime.now().year
+
+        prompt = f"""
+Act as an expert Indian agricultural advisor. Given the following context, generate a detailed crop calendar for the main crops, showing UPCOMING and CURRENT activities relevant to {current_month_name} {current_year}. Focus on activities happening NOW or in the next 3-6 months. The calendar should align activities with rainfall and temperature patterns for best yield and reduced risk.
+
+Region: {region}
+Crops: {crops}
+Current Weather: {weather}
+Current Month: {current_month_name} (Month {current_month})
+
+For each crop, list the key activities (sowing, irrigation, fertilization, pest control, harvesting) with recommended time windows. IMPORTANT: Only include activities that are:
+1. Currently happening (in {current_month_name})
+2. Coming up in the next few months
+3. Recently completed (if relevant for planning)
+
+Do NOT include activities from past months unless they're still ongoing. Focus on what farmers should do NOW and NEXT.
+
+Format the response as a JSON list, where each item is:
+{{
+  "crop": "<crop name>",
+  "calendar": [
+    {{"activity": "Sowing", "window": "November 1-15", "tips": ["Tip 1", "Tip 2"]}},
+    {{"activity": "Irrigation", "window": "December-January", "tips": ["Tip 1"]}},
+    ...
+  ]
+}}
+Only include crops relevant to the region, current season, and weather. Be concise but practical.
+"""
+
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "system", "content": "You are a helpful agricultural assistant specializing in Indian farming seasons and crop calendars. Always provide timely, season-appropriate advice."},
+                          {"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=1200
+            )
+            reply = response.choices[0].message.content.strip()
+            # Try to extract JSON from the reply
+            import json
+            try:
+                # If the reply is wrapped in markdown, strip it
+                if reply.startswith("```json"):
+                    reply = reply.split('\n', 1)[1]
+                    reply = reply.strip('`')
+                calendar = json.loads(reply)
+            except Exception:
+                # Fallback: try to find the first JSON block
+                import re
+                match = re.search(r'\[\s*{.*?}\s*\]', reply, re.DOTALL)
+                if match:
+                    try:
+                        calendar = json.loads(match.group(0))
+                    except Exception:
+                        print("[ERROR] Could not parse calendar JSON from OpenAI reply.")
+                        calendar = None
+                else:
+                    print("[ERROR] Could not find JSON block in OpenAI reply.")
+                    calendar = None
+            if calendar:
+                return jsonify({"success": True, "calendar": calendar})
+            else:
+                print("[FALLBACK] Using static calendar due to OpenAI parse failure.")
+        except Exception as e:
+            print(f"[ERROR] /api/crop_calendar OpenAI: {e}")
+            calendar = None
+
+        # Fallback: Generate season-appropriate calendar based on current month
+        # November = Rabi season (Winter crops)
+        if current_month in [10, 11, 12]:  # Oct, Nov, Dec - Rabi sowing season
+            fallback_calendar = [
+                {
+                    "crop": "Wheat",
+                    "calendar": [
+                        {"activity": "Sowing", "window": f"{current_month_name}-December", "tips": ["Use certified seeds", "Sow after first winter rain", "Ensure proper land leveling"]},
+                        {"activity": "Irrigation", "window": "December onwards", "tips": ["First irrigation at crown root initiation (21 days)", "Maintain soil moisture"]},
+                        {"activity": "Fertilization", "window": f"At sowing (now in {current_month_name})", "tips": ["Apply NPK as per soil test", "Split nitrogen application"]},
+                        {"activity": "Harvesting", "window": "March-April", "tips": ["Harvest when grains are hard", "Avoid delay to prevent shattering"]}
+                    ]
+                },
+                {
+                    "crop": "Mustard",
+                    "calendar": [
+                        {"activity": "Sowing", "window": f"{current_month_name} (optimal time)", "tips": ["Direct seeding in well-prepared soil", "Maintain proper row spacing"]},
+                        {"activity": "Irrigation", "window": "December-February", "tips": ["Irrigate at flowering stage", "Avoid waterlogging"]},
+                        {"activity": "Fertilization", "window": "At sowing and 30 days after", "tips": ["Apply recommended dose of fertilizers", "Use boron for better yield"]},
+                        {"activity": "Harvesting", "window": "February-March", "tips": ["Harvest when pods turn brown", "Dry properly before threshing"]}
+                    ]
+                }
+            ]
+        elif current_month in [1, 2, 3]:  # Jan, Feb, Mar - Rabi maintenance/harvest
+            fallback_calendar = [
+                {
+                    "crop": "Wheat",
+                    "calendar": [
+                        {"activity": "Irrigation", "window": f"{current_month_name} (ongoing)", "tips": ["Critical irrigation at flowering and grain filling", "Avoid water stress"]},
+                        {"activity": "Pest Management", "window": "Now", "tips": ["Monitor for aphids and rust", "Apply preventive measures"]},
+                        {"activity": "Harvesting", "window": "March-April", "tips": ["Harvest at physiological maturity", "Check grain moisture"]}
+                    ]
+                },
+                {
+                    "crop": "Mustard",
+                    "calendar": [
+                        {"activity": "Irrigation", "window": f"{current_month_name}", "tips": ["Ensure adequate moisture during pod development"]},
+                        {"activity": "Harvesting", "window": "February-March", "tips": ["Harvest when 75% pods turn brown", "Handle carefully to avoid shattering"]}
+                    ]
+                }
+            ]
+        elif current_month in [4, 5, 6]:  # Apr, May, Jun - Summer/Kharif preparation
+            fallback_calendar = [
+                {
+                    "crop": "Rice (Kharif)",
+                    "calendar": [
+                        {"activity": "Nursery Preparation", "window": f"{current_month_name}-June", "tips": ["Prepare nursery beds", "Soak seeds for 24 hours"]},
+                        {"activity": "Sowing/Transplanting", "window": "June-July (after monsoon)", "tips": ["Transplant 20-25 day old seedlings", "Maintain proper spacing"]},
+                        {"activity": "Land Preparation", "window": "Now", "tips": ["Plough and level the field", "Apply organic manure"]}
+                    ]
+                },
+                {
+                    "crop": "Cotton",
+                    "calendar": [
+                        {"activity": "Sowing", "window": f"{current_month_name}-June", "tips": ["Select disease-resistant varieties", "Treat seeds before sowing"]},
+                        {"activity": "Irrigation", "window": "Starting from sowing", "tips": ["Light irrigation initially", "Increase frequency during flowering"]},
+                        {"activity": "Fertilization", "window": "At sowing and 30 days after", "tips": ["Apply basal dose before sowing", "Top dress with nitrogen"]}
+                    ]
+                }
+            ]
+        else:  # Jul, Aug, Sep - Kharif season (Monsoon crops)
+            fallback_calendar = [
+                {
+                    "crop": "Rice (Kharif)",
+                    "calendar": [
+                        {"activity": "Transplanting", "window": f"{current_month_name} (if not done)", "tips": ["Ensure 2-3 seedlings per hill", "Maintain water level"]},
+                        {"activity": "Irrigation", "window": "Throughout growth period", "tips": ["Maintain 2-3cm standing water", "Drain before harvest"]},
+                        {"activity": "Fertilization", "window": "Split application", "tips": ["Apply nitrogen in splits", "Top dress at tillering and panicle stages"]},
+                        {"activity": "Harvesting", "window": "October-November", "tips": ["Harvest at 80% grain maturity", "Dry grains to 14% moisture"]}
+                    ]
+                },
+                {
+                    "crop": "Maize",
+                    "calendar": [
+                        {"activity": "Weeding", "window": f"{current_month_name} (ongoing)", "tips": ["Remove weeds at 20-25 days", "Use mulching to control weeds"]},
+                        {"activity": "Fertilization", "window": "30-40 days after sowing", "tips": ["Apply nitrogen top dressing", "Ensure adequate phosphorus"]},
+                        {"activity": "Harvesting", "window": "September-October", "tips": ["Harvest when grain moisture is 20-25%", "Dry properly"]}
+                    ]
+                }
+            ]
+        
+        return jsonify({"success": True, "calendar": fallback_calendar, "fallback": True, "current_month": current_month_name})
+    except Exception as e:
+        print(f"[ERROR] /api/crop_calendar: {e}")
+        # Fallback static calendar (in case of total failure)
+        fallback_calendar = [
+            {
+                "crop": "Wheat",
+                "calendar": [
+                    {"activity": "Sowing", "window": "Nov 1-15", "tips": ["Use certified seeds", "Sow after first winter rain"]},
+                    {"activity": "Irrigation", "window": "Dec, Jan, Feb", "tips": ["Irrigate at crown root initiation"]},
+                    {"activity": "Fertilization", "window": "At sowing & tillering", "tips": ["Apply NPK as per soil test"]},
+                    {"activity": "Harvesting", "window": "March-April", "tips": ["Harvest when grains are hard"]}
+                ]
+            },
+            {
+                "crop": "Rice",
+                "calendar": [
+                    {"activity": "Sowing", "window": "June 15-30", "tips": ["Transplant 20-25 day old seedlings"]},
+                    {"activity": "Irrigation", "window": "July-Sept", "tips": ["Maintain standing water 2-3cm"]},
+                    {"activity": "Fertilization", "window": "At transplanting & panicle initiation", "tips": ["Split N application"]},
+                    {"activity": "Harvesting", "window": "Oct-Nov", "tips": ["Harvest at 80% grain maturity"]}
+                ]
+            }
+        ]
+        return jsonify({"success": True, "calendar": fallback_calendar, "fallback": True})
+
+# Route for Climate Smart Crop Planning Assistant
+@app.route("/climate_smart_assistant")
+def climate_smart_assistant():
+    return render_template("climate_smart_assistant.html")
 
 
 
