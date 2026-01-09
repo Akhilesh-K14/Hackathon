@@ -1368,7 +1368,7 @@
                 });
 
                 // Calculate total
-                const total = cart.reduce((sum, item) => sum + (parseFloat(item.price) * item.quantity), 0);
+                const total = cart.reduce((sum, item) => sum + (parseFloat(item.price) * item.cartQuantity), 0);
 
                 // Prepare payment data
                 const paymentData = {
